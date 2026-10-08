@@ -314,15 +314,15 @@ function renderModels() {
       : `${fmtMoney(w.cost, 4)} / ${fmtMoney(cap, 2)}`;
 
     // opencode's own recorded cost differs for peak-priced models, because it
-    // never applies the peak multiplier. Surface the gap instead of hiding it.
+    // never applies the peak multiplier. Surface both figures, scoped to the
+    // window being viewed, instead of hiding the gap.
     const basisParts = [];
     if (!m.unlimited && Number.isFinite(cap)) {
       basisParts.push(`本窗口上限 ${fmtMoney(cap, 2)}（月额度的 ${Math.round((cap / m.monthlyLimit) * 100)}%）`);
     }
-    if (m.known && !m.unlimited && Number.isFinite(m.costBasis?.opencodeRecorded)) {
-      const rec = m.costBasis.opencodeRecorded;
-      if (Math.abs(m.costBasis.official - rec) > 1e-9) {
-        basisParts.push(`官方口径 ${fmtMoney(w.costRaw, 4)} / opencode 记录 ${fmtMoney(rec, 4)}`);
+    if (m.known && !m.unlimited && Number.isFinite(w.recordedCost)) {
+      if (Math.abs(w.cost - w.recordedCost) > 1e-9) {
+        basisParts.push(`官方口径 ${fmtMoney(w.cost, 4)} / opencode 记录 ${fmtMoney(w.recordedCost, 4)}`);
       }
     }
     const basis = basisParts.length ? `<div class="basis">${basisParts.join(" · ")}</div>` : "";

@@ -145,12 +145,14 @@ test("token counters accumulate per window and per model", () => {
   const t = stats.totals.monthly;
   assert.equal(t.input, 300);
   assert.equal(t.cacheRead, 3000);
-  assert.equal(t.cost, 0.03);
+  // the primary cost is the official recompute; opencode's recorded value is kept
+  assert.ok(Math.abs(t.cost - 0.002925) < 1e-12, `official cost ${t.cost}`);
+  assert.ok(Math.abs(t.recordedCost - 0.03) < 1e-12, `recorded cost ${t.recordedCost}`);
 });
 
 test("Go Plus doubles the per-model allowance", () => {
   const { file, dir } = fixtureDb([
-    { sessionId: "s1", at: NOW - 1000, modelId: "kimi-k3", cost: 18 },
+    { sessionId: "s1", at: NOW - 1000, modelId: "kimi-k3", input: 6e6, cost: 18 },
   ]);
   const go = buildStats({ dbPath: file, now: NOW, plan: "go" });
   const plus = buildStats({ dbPath: file, now: NOW, plan: "plus" });

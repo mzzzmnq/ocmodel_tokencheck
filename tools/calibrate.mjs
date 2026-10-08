@@ -48,7 +48,7 @@ for (const r of records.filter((x) => x.isGo)) {
     continue;
   }
   const got = costOf(r.modelId, r.tokens, { at: r.at });
-  const rec = r.cost;
+  const rec = r.recordedCost;
   recordedTotal += rec;
   computedTotal += got.cost;
 

@@ -174,7 +174,7 @@ function makeDom() {
 function usagePayload() {
   const zero = (o = {}) => ({
     input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0,
-    cost: 0, costRaw: 0, calls: 0, errors: 0, peakCalls: 0, offPeakCalls: 0, ...o,
+    cost: 0, recordedCost: 0, calls: 0, errors: 0, peakCalls: 0, offPeakCalls: 0, ...o,
   });
   return {
     version: "1.0.0",
@@ -204,18 +204,18 @@ function usagePayload() {
             unlimited: false, monthlyLimit: 60,
             lastUsedAt: Date.UTC(2026, 0, 8, 11, 30, 0), sessionCount: 4,
             windows: {
-              rolling: zero({ input: 100, output: 10, reasoning: 5, cacheRead: 1000, cost: 0.01, costRaw: 0.02, calls: 1, peakCalls: 1 }),
-              weekly: zero({ input: 500, output: 50, reasoning: 25, cacheRead: 5000, cost: 0.05, costRaw: 0.08, calls: 5, peakCalls: 4, offPeakCalls: 1 }),
-              monthly: zero({ input: 700, output: 80, reasoning: 40, cacheRead: 7000, cost: 0.09, costRaw: 0.13, calls: 7, errors: 1, peakCalls: 5, offPeakCalls: 2 }),
-              all: zero({ input: 700, output: 80, reasoning: 40, cacheRead: 7000, cost: 0.09, costRaw: 0.13, calls: 7, errors: 1, peakCalls: 5, offPeakCalls: 2 }),
+              rolling: zero({ input: 100, output: 10, reasoning: 5, cacheRead: 1000, cost: 0.02, recordedCost: 0.01, calls: 1, peakCalls: 1 }),
+              weekly: zero({ input: 500, output: 50, reasoning: 25, cacheRead: 5000, cost: 0.08, recordedCost: 0.05, calls: 5, peakCalls: 4, offPeakCalls: 1 }),
+              monthly: zero({ input: 700, output: 80, reasoning: 40, cacheRead: 7000, cost: 0.13, recordedCost: 0.09, calls: 7, errors: 1, peakCalls: 5, offPeakCalls: 2 }),
+              all: zero({ input: 700, output: 80, reasoning: 40, cacheRead: 7000, cost: 0.13, recordedCost: 0.09, calls: 7, errors: 1, peakCalls: 5, offPeakCalls: 2 }),
             },
-            monthly: { used: 0.09, limit: 60, remaining: 59.91, percentUsed: 0.15, percentRemaining: 99.85 },
-            costBasis: { official: 0.09, opencodeRecorded: 0.13, delta: -0.04 },
-            peakSplit: { peakCost: 0.07, offPeakCost: 0.02 },
+            monthly: { used: 0.13, limit: 60, remaining: 59.87, percentUsed: 0.2167, percentRemaining: 99.7833 },
+            costBasis: { official: 0.13, opencodeRecorded: 0.09, delta: 0.04 },
+            peakSplit: { peakCost: 0.1, offPeakCost: 0.03 },
             shares: {
-              rolling: { cost: 0.01, calls: 1, shareRatio: 0.001, hasPeakPricing: true },
-              weekly: { cost: 0.05, calls: 5, shareRatio: 0.002, hasPeakPricing: true },
-              monthly: { cost: 0.09, calls: 7, shareRatio: 0.0015, hasPeakPricing: true },
+              rolling: { cost: 0.02, calls: 1, shareRatio: 0.0016667, hasPeakPricing: true },
+              weekly: { cost: 0.08, calls: 5, shareRatio: 0.0026667, hasPeakPricing: true },
+              monthly: { cost: 0.13, calls: 7, shareRatio: 0.0021667, hasPeakPricing: true },
             },
           },
           {
@@ -239,10 +239,10 @@ function usagePayload() {
           },
         ],
         totals: {
-          rolling: zero({ input: 100, output: 10, reasoning: 5, cacheRead: 1000, cost: 0.01, costRaw: 0.02, calls: 1, peakCalls: 1 }),
-          weekly: zero({ input: 510, output: 51, reasoning: 25, cacheRead: 5000, cost: 0.05, costRaw: 0.08, calls: 6, peakCalls: 4, offPeakCalls: 2 }),
-          monthly: zero({ input: 710, output: 81, reasoning: 40, cacheRead: 7000, cost: 0.09, costRaw: 0.13, calls: 8, errors: 1, peakCalls: 5, offPeakCalls: 3 }),
-          all: zero({ input: 710, output: 81, reasoning: 40, cacheRead: 7000, cost: 0.09, costRaw: 0.13, calls: 8, errors: 1, peakCalls: 5, offPeakCalls: 3 }),
+          rolling: zero({ input: 100, output: 10, reasoning: 5, cacheRead: 1000, cost: 0.02, recordedCost: 0.01, calls: 1, peakCalls: 1 }),
+          weekly: zero({ input: 510, output: 51, reasoning: 25, cacheRead: 5000, cost: 0.08, recordedCost: 0.05, calls: 6, peakCalls: 4, offPeakCalls: 2 }),
+          monthly: zero({ input: 710, output: 81, reasoning: 40, cacheRead: 7000, cost: 0.13, recordedCost: 0.09, calls: 8, errors: 1, peakCalls: 5, offPeakCalls: 3 }),
+          all: zero({ input: 710, output: 81, reasoning: 40, cacheRead: 7000, cost: 0.13, recordedCost: 0.09, calls: 8, errors: 1, peakCalls: 5, offPeakCalls: 3 }),
         },
         daily: [
           { date: "2026-01-06", cost: 0.01, calls: 1, byModel: {} },
@@ -459,7 +459,7 @@ test("dashboard renders rings, per-model rows, totals, chart and calls", async (
   assert.match(modelRows[0].innerHTML, /峰谷价/);
   assert.match(modelRows[0].innerHTML, /本窗口上限 \$60\.00（月额度的 100%）/, "window cap is spelled out");
   assert.match(modelRows[0].innerHTML, /官方口径/, "cost-basis gap is surfaced");
-  assert.match(modelRows[0].innerHTML, /\$0\.0900 \/ \$60\.00/, "window cost over its own cap");
+  assert.match(modelRows[0].innerHTML, /\$0\.1300 \/ \$60\.00/, "window cost over its own cap");
   assert.match(modelRows[1].innerHTML, /免费/);
 
   const totalsHtml = els.get("totals").innerHTML;
@@ -508,7 +508,7 @@ test("switching the billing window re-filters rows without another fetch", async
 
 test("the tightest window is selected automatically", async () => {
   const { els, api } = await boot();
-  // rolling: 0.01/12 = 0.08%, weekly: 0.05/30 = 0.17%, monthly: 0.09/60 = 0.15%
+  // rolling: 0.02/12 = 0.17%, weekly: 0.08/30 = 0.27%, monthly: 0.13/60 = 0.22%
   assert.equal(api.state.win, "weekly", "weekly is the most consumed window here");
   assert.equal(api.state.autoPicked, true);
   assert.match(els.get("modelsHint").textContent, /已自动切到最紧的窗口/);

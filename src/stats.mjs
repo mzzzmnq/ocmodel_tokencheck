@@ -27,7 +27,7 @@ export function emptyWindow() {
     cacheRead: 0,
     cacheWrite: 0,
     cost: 0,
-    costRaw: 0,
+    recordedCost: 0,
     calls: 0,
     errors: 0,
     peakCalls: 0,
@@ -42,7 +42,7 @@ function addInto(acc, rec) {
   acc.cacheRead += rec.tokens.cacheRead;
   acc.cacheWrite += rec.tokens.cacheWrite;
   acc.cost += rec.cost;
-  acc.costRaw += rec.costRaw;
+  acc.recordedCost += rec.recordedCost;
   acc.calls += 1;
   if (rec.error) acc.errors += 1;
   if (rec.peak === true) acc.peakCalls += 1;
@@ -122,8 +122,12 @@ export function readRecords(opts = {}) {
       tokens,
       peak: getModel(modelId)?.peakRate ? isPeakHour(at) : null,
       tier: priced?.tier ?? null,
-      cost: recorded ?? priced?.cost ?? 0,
-      costRaw: priced?.cost ?? 0,
+      // `cost` is the authoritative figure: the official price table, which for
+      // DeepSeek models applies the peak multiplier inside the peak windows.
+      // `recordedCost` is what opencode itself stored — its price source
+      // (models.dev) has no time dimension, so it always bills off-peak.
+      cost: priced?.cost ?? recorded ?? 0,
+      recordedCost: recorded ?? priced?.cost ?? 0,
       error: data.finish === "error" || Boolean(data.error),
     });
   }
@@ -244,8 +248,8 @@ export function buildStats(opts = {}) {
         },
         costBasis: {
           official: e.windows.monthly.cost,
-          opencodeRecorded: e.windows.monthly.costRaw,
-          delta: e.windows.monthly.cost - e.windows.monthly.costRaw,
+          opencodeRecorded: e.windows.monthly.recordedCost,
+          delta: e.windows.monthly.cost - e.windows.monthly.recordedCost,
         },
         shares: modelShares(goRecords, e.modelId, plan, starts),
       };
@@ -342,7 +346,7 @@ export function recentCalls(opts = {}, limit = 40) {
       title: r.title,
       tokens: r.tokens,
       cost: r.cost,
-      costRaw: r.costRaw,
+      recordedCost: r.recordedCost,
       tier: r.tier,
       error: r.error,
     }));
