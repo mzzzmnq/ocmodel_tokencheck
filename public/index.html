@@ -23,6 +23,7 @@
           </select>
         </label>
         <button id="refreshBtn" class="primary">刷新</button>
+        <button id="coverageBtn" class="ghost">模型覆盖</button>
         <button id="keyBtn" class="ghost">API key</button>
         <span class="muted" id="updatedAt">—</span>
       </div>
@@ -51,6 +52,29 @@
           <input id="keyInput" type="password" placeholder="oc_sk_..." autocomplete="off" spellcheck="false" />
           <button id="keySave" class="primary">保存</button>
           <button id="keyClear" class="ghost">清除</button>
+        </div>
+      </section>
+
+      <section class="card" id="coverageCard" hidden>
+        <div class="card-head">
+          <h2>模型覆盖与额度上限</h2>
+          <span class="hint" id="coverageSource"></span>
+        </div>
+        <div class="notice" id="coverageWarn" hidden></div>
+        <div id="coverageSummary" class="totals"></div>
+        <div class="table-wrap">
+          <table id="coverageTable">
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th class="num">5 小时上限</th>
+                <th class="num">每周上限</th>
+                <th class="num">每月上限</th>
+                <th>标记</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </section>
 

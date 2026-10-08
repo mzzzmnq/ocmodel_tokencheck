@@ -5,7 +5,9 @@ import {
   isPeakHour,
   monthlyLimit,
   pickTier,
+  windowLimit,
   windowStarts,
+  WINDOW_RULES,
   MODELS,
 } from "../src/pricing.mjs";
 
@@ -77,6 +79,39 @@ test("monthly limits follow the documented per-model allowances and Go Plus scal
   assert.equal(monthlyLimit("glm-5.2", "plus"), 120);
   assert.equal(monthlyLimit("longcat-2.5-preview-free", "go"), Infinity);
   assert.equal(monthlyLimit("not-a-model", "go"), null);
+});
+
+test("each window gets 20% / 50% / 100% of the model's monthly allowance", () => {
+  assert.equal(WINDOW_RULES.rolling.share, 0.2);
+  assert.equal(WINDOW_RULES.weekly.share, 0.5);
+  assert.equal(WINDOW_RULES.monthly.share, 1);
+
+  // GLM-5.2 has a $60 monthly allowance -> $12 / $30 / $60 windows
+  assert.equal(windowLimit("glm-5.2", "go", "rolling"), 12);
+  assert.equal(windowLimit("glm-5.2", "go", "weekly"), 30);
+  assert.equal(windowLimit("glm-5.2", "go", "monthly"), 60);
+  assert.equal(windowLimit("glm-5.2", "go", "all"), Infinity);
+
+  // Go Plus doubles every window
+  assert.equal(windowLimit("kimi-k3", "plus", "rolling"), 6);
+  assert.equal(windowLimit("kimi-k3", "plus", "weekly"), 15);
+  assert.equal(windowLimit("kimi-k3", "plus", "monthly"), 30);
+
+  // unlimited models have no window caps; unknown models have no data at all
+  assert.equal(windowLimit("longcat-2.5-preview-free", "go", "monthly"), Infinity);
+  assert.equal(windowLimit("not-a-model", "go", "monthly"), null);
+});
+
+test("window limits are always ordered rolling <= weekly <= monthly", () => {
+  for (const plan of ["go", "plus"]) {
+    for (const id of Object.keys(MODELS)) {
+      const r = windowLimit(id, plan, "rolling");
+      const w = windowLimit(id, plan, "weekly");
+      const m = windowLimit(id, plan, "monthly");
+      if (!Number.isFinite(r)) continue;
+      assert.ok(r <= w && w <= m, `${id}/${plan}: ${r} ${w} ${m}`);
+    }
+  }
 });
 
 test("the free preview model costs nothing", () => {

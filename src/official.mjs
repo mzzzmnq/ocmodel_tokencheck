@@ -18,8 +18,14 @@ import { defaultDbPath } from "./stats.mjs";
 export const USAGE_URL =
   process.env.TOKENCHECK_USAGE_URL || "https://opencode.ai/zen/go/v1/usage";
 
+/** Public model catalogue for the Go endpoint (no auth required). */
+export const MODELS_URL =
+  process.env.TOKENCHECK_MODELS_URL || "https://opencode.ai/zen/go/v1/models";
+
 const CACHE_TTL_MS = Number(process.env.TOKENCHECK_CACHE_MS || 60_000);
+const CATALOG_TTL_MS = Number(process.env.TOKENCHECK_CATALOG_MS || 24 * 3600_000);
 let cache = { key: null, at: 0, payload: null, error: null };
+let catalogCache = { at: 0, payload: null };
 
 export function configPath() {
   const dir = process.env.APPDATA
@@ -223,4 +229,52 @@ export async function fetchOfficialUsage(opts = {}) {
 
 export function clearUsageCache() {
   cache = { key: null, at: 0, payload: null };
+}
+
+/**
+ * Fetch the list of models the Go endpoint currently serves. This endpoint needs
+ * no authentication, but is rate-limited politely by a long-lived cache.
+ * @param {{force?: boolean}} [opts]
+ */
+export async function fetchModelCatalog(opts = {}) {
+  if (!opts.force && catalogCache.payload && Date.now() - catalogCache.at < CATALOG_TTL_MS) {
+    return { ...catalogCache.payload, cached: true };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  let payload;
+  try {
+    const res = await fetch(MODELS_URL, {
+      headers: { Accept: "application/json", "User-Agent": "tokencheck/1.0" },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      payload = { ok: false, reason: "http-error", status: res.status, message: `模型目录返回 HTTP ${res.status}。` };
+    } else {
+      const body = await res.json();
+      const list = Array.isArray(body?.data) ? body.data : [];
+      payload = {
+        ok: true,
+        fetchedAt: Date.now(),
+        endpoint: MODELS_URL,
+        ids: list.map((m) => m.id).filter((id) => typeof id === "string").sort(),
+      };
+    }
+  } catch (err) {
+    payload = {
+      ok: false,
+      reason: err?.name === "AbortError" ? "timeout" : "network",
+      message: `请求模型目录失败：${err?.message ?? err}`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  catalogCache = { at: Date.now(), payload };
+  return payload;
+}
+
+export function clearCatalogCache() {
+  catalogCache = { at: 0, payload: null };
 }

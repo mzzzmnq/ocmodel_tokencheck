@@ -11,8 +11,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildStats, recentCalls, defaultDbPath } from "./stats.mjs";
-import { fetchOfficialUsage, resolveKey, maskKey, writeConfigFile, configPath, clearUsageCache } from "./official.mjs";
-import { MODELS, monthlyLimit, isPeakHour } from "./pricing.mjs";
+import {
+  fetchOfficialUsage,
+  fetchModelCatalog,
+  resolveKey,
+  maskKey,
+  writeConfigFile,
+  configPath,
+  clearUsageCache,
+  clearCatalogCache,
+} from "./official.mjs";
+import { buildCoverage } from "./coverage.mjs";
+import { MODELS, monthlyLimit, isPeakHour, WINDOW_RULES } from "./pricing.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -144,7 +154,27 @@ async function api(req, res, url) {
       peak: Boolean(m.peakRate),
       tiers: m.tiers.map((t) => ({ ...t })),
     }));
-    return json(res, 200, { count: rows.length, models: rows, peakNow: isPeakHour(new Date()) });
+    return json(res, 200, {
+      count: rows.length,
+      models: rows,
+      windowRules: WINDOW_RULES,
+      peakNow: isPeakHour(new Date()),
+    });
+  }
+
+  if (route === "/api/catalog" && req.method === "GET") {
+    const catalog = await fetchModelCatalog({ force: url.searchParams.get("force") === "1" });
+    return json(res, 200, catalog);
+  }
+
+  if (route === "/api/coverage" && req.method === "GET") {
+    const plan = url.searchParams.get("plan") === "plus" ? "plus" : PLAN;
+    const coverage = await buildCoverage({
+      dbPath: DB_PATH,
+      plan,
+      force: url.searchParams.get("force") === "1",
+    });
+    return json(res, 200, coverage);
   }
 
   if (route === "/api/key") {
@@ -175,8 +205,12 @@ async function api(req, res, url) {
 
   if (route === "/api/refresh" && req.method === "POST") {
     clearUsageCache();
-    const official = await fetchOfficialUsage({ force: true, dbPath: DB_PATH });
-    return json(res, 200, { ok: official.ok, official });
+    clearCatalogCache();
+    const [official, catalog] = await Promise.all([
+      fetchOfficialUsage({ force: true, dbPath: DB_PATH }),
+      fetchModelCatalog({ force: true }),
+    ]);
+    return json(res, 200, { ok: official.ok, official, catalog });
   }
 
   return json(res, 404, { ok: false, message: `unknown route ${route}` });

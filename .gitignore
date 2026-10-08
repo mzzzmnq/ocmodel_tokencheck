@@ -8,6 +8,9 @@ config.json
 *.sqlite3
 .env
 
+# internal agent handoff notes (not for the public repo)
+HANDOFF.md
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

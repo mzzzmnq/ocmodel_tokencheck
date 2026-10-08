@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { costOf, getModel, isPeakHour, monthlyLimit, windowStarts } from "./pricing.mjs";
+import { costOf, getModel, isPeakHour, monthlyLimit, windowLimit, windowStarts } from "./pricing.mjs";
 
 export function defaultDbPath() {
   const override = process.env.TOKENCHECK_DB;
@@ -223,6 +223,14 @@ export function buildStats(opts = {}) {
         known: e.known,
         unlimited,
         monthlyLimit: unlimited ? null : limit,
+        windowLimits: unlimited
+          ? { rolling: null, weekly: null, monthly: null, all: null }
+          : {
+              rolling: windowLimit(e.modelId, plan, "rolling"),
+              weekly: windowLimit(e.modelId, plan, "weekly"),
+              monthly: windowLimit(e.modelId, plan, "monthly"),
+              all: Infinity,
+            },
         windows: e.windows,
         lastUsedAt: e.lastUsedAt || null,
         sessionCount: e._sessions.size,
@@ -239,7 +247,7 @@ export function buildStats(opts = {}) {
           opencodeRecorded: e.windows.monthly.costRaw,
           delta: e.windows.monthly.cost - e.windows.monthly.costRaw,
         },
-        shares: modelShares(goRecords, e.modelId, starts),
+        shares: modelShares(goRecords, e.modelId, plan, starts),
       };
     })
     .sort((a, b) => b.windows.monthly.cost - a.windows.monthly.cost || b.windows.all.calls - a.windows.all.calls);
@@ -268,36 +276,39 @@ export function buildStats(opts = {}) {
 /**
  * Per-model consumption inside each billing window.
  *
- * `shareRatio` is the fraction of this model's own documented monthly limit
- * that the locally observed spend in that window represents. It is derived from
- * local records only, because the official API reports a single account-wide
- * percentage per window and cannot be split by model.
+ * `shareRatio` is the fraction of that window's own allowance the locally
+ * observed spend represents. The windows are nested (5h allowance = 20% of the
+ * model's monthly limit, weekly = 50%), so the ratios stay comparable while each
+ * one answers a different question — a model can be throttled by the 5-hour cap
+ * long before its monthly figure looks worrying.
+ *
+ * Everything here comes from local records: the official API reports a single
+ * account-wide percentage per window and cannot be split by model.
  */
-function modelShares(goRecords, modelId, starts) {
+function modelShares(goRecords, modelId, plan, starts) {
   const meta = getModel(modelId);
-  const limit = monthlyLimit(modelId, "go");
   const out = {};
   const windows = { rolling: starts.rolling, weekly: starts.weekly, monthly: starts.monthly };
 
   for (const [name, start] of Object.entries(windows)) {
     let cost = 0;
+    let calls = 0;
     for (let i = goRecords.length - 1; i >= 0; i--) {
       const r = goRecords[i];
       if (r.at < start) break;
-      if (r.modelId === modelId) cost += r.cost;
+      if (r.modelId !== modelId) continue;
+      cost += r.cost;
+      calls += 1;
     }
+    const cap = windowLimit(modelId, plan, name);
     out[name] = {
       cost,
-      calls: goRecords.filter((r) => r.modelId === modelId && r.at >= start).length,
-      shareRatio: Number.isFinite(limit) && limit > 0 ? cost / limit : 0,
+      calls,
+      limit: Number.isFinite(cap) ? cap : null,
+      shareRatio: Number.isFinite(cap) && cap > 0 ? cost / cap : 0,
       hasPeakPricing: Boolean(meta?.peakRate),
     };
   }
-
-  // Nested-window guard: the monthly share must never look smaller than weekly,
-  // and weekly never smaller than rolling.
-  out.weekly.shareRatio = Math.max(out.weekly.shareRatio, out.rolling.shareRatio);
-  out.monthly.shareRatio = Math.max(out.monthly.shareRatio, out.weekly.shareRatio);
   return out;
 }
 

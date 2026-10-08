@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { KNOWN_UNPRICED } from "../src/pricing.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.argv[process.argv.indexOf("--port") + 1]) || 7799;
@@ -75,10 +76,44 @@ try {
   const models = await get("/api/models");
   check("GET /api/models lists the price table",
     models.status === 200 && models.json.count > 20, `${models.json.count} models`);
+  check("GET /api/models documents the window rules",
+    models.json.windowRules?.rolling?.share === 0.2 &&
+      models.json.windowRules?.weekly?.share === 0.5 &&
+      models.json.windowRules?.monthly?.share === 1);
+
+  const catalog = await get("/api/catalog");
+  check("GET /api/catalog returns the live model list",
+    catalog.status === 200 && (catalog.json.ok === true ? Array.isArray(catalog.json.ids) && catalog.json.ids.length > 20 : typeof catalog.json.message === "string"),
+    catalog.json.ok ? `${catalog.json.ids.length} ids` : catalog.json.message);
+
+  const coverage = await get("/api/coverage");
+  check("GET /api/coverage merges catalogue, prices and local usage",
+    coverage.status === 200 && coverage.json.ok === true && Array.isArray(coverage.json.rows),
+    `used=${coverage.json.summary?.usedCount} priced=${coverage.json.pricedCount}`);
+  check("coverage reports per-window caps",
+    coverage.json.rows.find((r) => r.id === "glm-5.2")?.windowLimits?.rolling === 12);
+  check("coverage never invents caps for unpriced models",
+    coverage.json.rows.filter((r) => r.priced === false).every((r) => r.windowLimits === null));
+  // Guards the hand-maintained KNOWN_UNPRICED list against upstream drift.
+  {
+    const advertised = new Set(catalog.json.ids ?? []);
+    const unpriced = new Set(
+      coverage.json.rows.filter((r) => r.priced === false).map((r) => r.id),
+    );
+    const liveUnpriced = [...advertised].filter((id) => unpriced.has(id)).sort();
+    const listed = [...KNOWN_UNPRICED].sort();
+    check("KNOWN_UNPRICED still matches the live catalogue",
+      JSON.stringify(liveUnpriced) === JSON.stringify(listed),
+      liveUnpriced.length === listed.length
+        ? `${listed.length} unpriced ids`
+        : `live=[${liveUnpriced}] known=[${listed}]`);
+  }
 
   const key0 = await get("/api/key");
   check("GET /api/key reports state without the secret",
-    typeof key0.json.hasKey === "boolean" && !JSON.stringify(key0.json).includes("sk_35575004"));
+    typeof key0.json.hasKey === "boolean" &&
+      !/oc_sk_[A-Za-z0-9]{8,}/.test(JSON.stringify(key0.json)),
+    "key response carries no full key");
 
   const saved = await get("/api/key", {
     method: "POST",

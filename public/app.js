@@ -2,11 +2,19 @@
 
 const state = {
   win: "rolling",
+  autoPicked: false,
   data: null,
+  coverage: null,
   plan: localStorage.getItem("tokencheck.plan") || "go",
 };
 
 const $ = (sel) => document.querySelector(sel);
+
+// Deep link support: /?win=monthly pins a billing window, /?coverage=1 opens the
+// coverage panel. globalThis keeps this testable outside a browser.
+const bootParams = new URLSearchParams(globalThis.location?.search ?? "");
+const WINDOWS = ["rolling", "weekly", "monthly", "all"];
+const pinnedWindow = WINDOWS.includes(bootParams.get("win")) ? bootParams.get("win") : null;
 
 /* ---------- formatting ---------- */
 
@@ -64,6 +72,101 @@ function toast(msg, ms = 2600) {
 
 /* ---------- data ---------- */
 
+/**
+ * Pick the billing window under the most pressure, so a model throttled by its
+ * 5-hour cap is not hidden behind a roomy monthly number.
+ */
+function tightestWindow() {
+  const models = state.data?.local?.ok ? state.data.local.data.models : [];
+  const order = ["rolling", "weekly", "monthly"];
+  let best = null;
+  for (const w of order) {
+    let max = 0;
+    for (const m of models) {
+      if (m.unlimited || !m.known) continue;
+      const r = m.shares?.[w]?.shareRatio;
+      if (Number.isFinite(r)) max = Math.max(max, r);
+    }
+    if (best === null || max > best.share) best = { win: w, share: max };
+  }
+  return best?.win ?? "rolling";
+}
+
+function setAutoWindow() {
+  const pick = tightestWindow();
+  const btn = document.querySelector(`#windowSeg button[data-win="${pick}"]`);
+  state.win = pick;
+  state.autoPicked = true;
+  document.querySelectorAll("#windowSeg button").forEach((b) => b.classList.toggle("active", b === btn));
+}
+
+async function loadCoverage(force = false) {
+  const btn = $("#coverageBtn");
+  btn.disabled = true;
+  try {
+    const qs = new URLSearchParams({ plan: state.plan });
+    if (force) qs.set("force", "1");
+    state.coverage = await (await fetch(`/api/coverage?${qs}`, { cache: "no-store" })).json();
+    renderCoverage();
+  } catch (err) {
+    toast(`模型覆盖加载失败：${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderCoverage() {
+  const c = state.coverage;
+  const tbody = $("#coverageTable tbody");
+  const warn = $("#coverageWarn");
+  if (!c || !c.ok) {
+    $("#coverageSource").textContent = "";
+    $("#coverageSummary").innerHTML = '<div class="empty">暂无覆盖数据</div>';
+    tbody.innerHTML = "";
+    warn.hidden = true;
+    return;
+  }
+
+  $("#coverageSource").textContent =
+    c.catalog.ok
+      ? `官方目录 ${c.catalog.count} 个模型 · 缓存于 ${fmtTime(c.catalog.fetchedAt)}`
+      : c.catalog.message || "官方目录不可用";
+
+  warn.hidden = c.warnings.length === 0;
+  warn.className = "notice";
+  warn.textContent = c.warnings.join(" ");
+
+  const s = c.summary;
+  $("#coverageSummary").innerHTML = [
+    ["本机用过的模型", `${s.usedCount} 个`],
+    ["已收录价格", `${c.pricedCount} 个`],
+    ["官方在售", s.advertisedCount == null ? "未知" : `${s.advertisedCount} 个`],
+    ["用过但未收录价", `${s.usedUnpricedCount} 个`],
+    ["在售但未收录价", `${s.advertisedUnpricedCount} 个`],
+    ["有价但已下架", `${s.notAdvertisedCount} 个`],
+  ]
+    .map(([k, v]) => `<div class="item"><div class="k">${k}</div><div class="v">${v}</div></div>`)
+    .join("");
+
+  tbody.innerHTML = "";
+  for (const r of c.rows) {
+    const tags = [];
+    if (r.used) tags.push('<span class="tag used">在用</span>');
+    if (!r.priced) tags.push('<span class="tag unknown">未收录价格</span>');
+    if (r.unlimited) tags.push('<span class="tag free">免费</span>');
+    if (r.peak) tags.push('<span class="tag peak">峰谷价</span>');
+    if (r.priced && r.advertised === false) tags.push('<span class="tag">已下架</span>');
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><div class="model-name"><span>${r.label}</span></div><div class="basis">${r.id}</div></td>
+      <td class="num">${r.windowLimits ? (r.unlimited ? "不限" : fmtMoney(r.windowLimits.rolling, 2)) : "—"}</td>
+      <td class="num">${r.windowLimits ? (r.unlimited ? "不限" : fmtMoney(r.windowLimits.weekly, 2)) : "—"}</td>
+      <td class="num">${r.windowLimits ? (r.unlimited ? "不限" : fmtMoney(r.windowLimits.monthly, 2)) : "—"}</td>
+      <td><div class="model-name">${tags.join("")}</div></td>`;
+    tbody.appendChild(tr);
+  }
+}
+
 async function load(force = false) {
   const btn = $("#refreshBtn");
   btn.disabled = true;
@@ -74,9 +177,27 @@ async function load(force = false) {
     const res = await fetch(`/api/usage?${qs}`, { cache: "no-store" });
     state.data = await res.json();
     render();
+    // Selecting the window is a convenience, never a prerequisite for drawing,
+    // so a surprise in the payload cannot blank the whole dashboard.
+    try {
+      if (pinnedWindow) {
+        state.win = pinnedWindow;
+        state.autoPicked = false;
+      } else {
+        setAutoWindow();
+      }
+      renderModels();
+      renderTotals();
+    } catch (err) {
+      console.error("tokencheck: 自动选择窗口失败", err);
+      state.win = "rolling";
+    }
     $("#healthDot").className = `dot ${state.data.official?.ok ? "ok" : "bad"}`;
+    if (!$("#coverageCard").hidden) await loadCoverage(force);
   } catch (err) {
-    toast(`加载失败：${err.message}`);
+    // Never leave the dashboard silently blank: say what broke.
+    console.error("tokencheck: 渲染失败", err);
+    toast(`渲染失败：${err.message}`);
     $("#healthDot").className = "dot bad";
   } finally {
     btn.disabled = false;
@@ -168,7 +289,8 @@ function renderModels() {
   const totalCost = models.reduce((s, m) => s + (m.windows[win]?.cost || 0), 0);
   $("#modelsHint").textContent =
     `${models.length} 个模型 · ${state.data.plan === "plus" ? "Go Plus" : "Go"} 套餐 · ` +
-    `本窗口合计 ${fmtMoney(totalCost, 4)} · 进度条 = 本窗口消耗 / 该模型总额度`;
+    `本窗口合计 ${fmtMoney(totalCost, 4)} · 进度条 = 本窗口消耗 / 该窗口上限` +
+    (state.autoPicked ? " · 已自动切到最紧的窗口" : "");
 
   if (!models.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty">该窗口内暂无 OpenCode Go 调用记录。</td></tr>`;
@@ -177,8 +299,9 @@ function renderModels() {
 
   for (const m of models) {
     const w = m.windows[win];
-    const share = m.shares?.[win]?.shareRatio ?? (m.monthlyLimit ? w.cost / m.monthlyLimit : 0);
-    const pct = m.unlimited ? 0 : Math.min(100, share * 100);
+    const cap = m.unlimited ? Infinity : (m.windowLimits?.[win] ?? m.monthlyLimit ?? Infinity);
+    const share = m.shares?.[win]?.shareRatio ?? (Number.isFinite(cap) && cap > 0 ? w.cost / cap : 0);
+    const pct = Number.isFinite(cap) ? Math.min(100, share * 100) : 0;
     const tr = document.createElement("tr");
 
     const tags = [];
@@ -188,19 +311,21 @@ function renderModels() {
 
     const limitText = m.unlimited
       ? "不限"
-      : `${fmtMoney(w.cost, 4)} / ${fmtMoney(m.monthlyLimit, 0)}`;
+      : `${fmtMoney(w.cost, 4)} / ${fmtMoney(cap, 2)}`;
 
     // opencode's own recorded cost differs for peak-priced models, because it
     // never applies the peak multiplier. Surface the gap instead of hiding it.
-    let basis = "";
+    const basisParts = [];
+    if (!m.unlimited && Number.isFinite(cap)) {
+      basisParts.push(`本窗口上限 ${fmtMoney(cap, 2)}（月额度的 ${Math.round((cap / m.monthlyLimit) * 100)}%）`);
+    }
     if (m.known && !m.unlimited && Number.isFinite(m.costBasis?.opencodeRecorded)) {
       const rec = m.costBasis.opencodeRecorded;
-      const off = m.costBasis.official;
-      const gap = Math.abs(off - rec);
-      if (gap > 1e-9) {
-        basis = `<div class="basis">本窗口官方口径 ${fmtMoney(w.costRaw, 4)}（opencode 记录 ${fmtMoney(rec, 4)}）</div>`;
+      if (Math.abs(m.costBasis.official - rec) > 1e-9) {
+        basisParts.push(`官方口径 ${fmtMoney(w.costRaw, 4)} / opencode 记录 ${fmtMoney(rec, 4)}`);
       }
     }
+    const basis = basisParts.length ? `<div class="basis">${basisParts.join(" · ")}</div>` : "";
 
     tr.innerHTML = `
       <td class="col-model"><div class="model-name"><span>${m.label}</span>${tags.join("")}</div>${basis}</td>
@@ -334,18 +459,29 @@ document.addEventListener("click", (e) => {
   const seg = e.target.closest("#windowSeg button");
   if (seg) {
     state.win = seg.dataset.win;
+    state.autoPicked = false;
     document.querySelectorAll("#windowSeg button").forEach((b) => b.classList.toggle("active", b === seg));
     renderModels();
     renderTotals();
   }
 });
 
+$("#coverageBtn").addEventListener("click", () => toggleCoverage());
 $("#refreshBtn").addEventListener("click", () => load(true));
 $("#keyBtn").addEventListener("click", () => {
   const card = $("#keyCard");
   card.hidden = !card.hidden;
   if (!card.hidden) $("#keyInput").focus();
 });
+
+async function toggleCoverage(force = false) {
+  const card = $("#coverageCard");
+  card.hidden = card.hidden === false && !force;
+  if (card.hidden) return;
+  if (force || !state.coverage) await loadCoverage(false);
+  else renderCoverage();
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
 
 $("#planSelect").addEventListener("change", async (e) => {
   state.plan = e.target.value;
@@ -387,4 +523,13 @@ setInterval(() => {
 }, 30_000);
 
 setInterval(() => load(false), 60_000);
-load(false);
+load(false).then(() => {
+  if (pinnedWindow) {
+    const btn = document.querySelector(`#windowSeg button[data-win="${pinnedWindow}"]`);
+    document.querySelectorAll("#windowSeg button").forEach((b) => b.classList.toggle("active", b === btn));
+    renderModels();
+    renderTotals();
+  }
+  if (bootParams.has("coverage")) return toggleCoverage(true);
+  return undefined;
+});

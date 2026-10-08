@@ -12,11 +12,24 @@ import { fileURLToPath } from "node:url";
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const appSource = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
 
+// app.js receives a stubbed setTimeout so its timers never fire; the test itself
+// still needs a real one to wait for the async render to settle.
+const sleep = (ms) => new Promise((r) => globalThis.setTimeout(r, ms));
+
+const camel = (s) => s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+
+// Surface rejections from the module-level load() so a render crash is visible
+// instead of silently leaving the dashboard half-populated.
+const seenRejections = [];
+process.on("unhandledRejection", (e) => seenRejections.push(e?.stack || String(e)));
+
 const ELEMENT_IDS = [
   "healthDot", "planPill", "planSelect", "refreshBtn", "keyBtn", "updatedAt",
   "officialSource", "rings", "officialNotice", "keyCard", "keySource", "configPath",
   "keyInput", "keySave", "keyClear", "windowSeg", "modelsHint", "modelsTable",
   "dailyChart", "totals", "totalsScope", "callsTable", "toast", "footInfo",
+  "coverageBtn", "coverageCard", "coverageSource", "coverageWarn", "coverageSummary",
+  "coverageTable",
 ];
 
 class El {
@@ -63,8 +76,17 @@ class El {
     this.children.push(child);
     return child;
   }
-  addEventListener() {}
+  // Element-level listeners (buttons) are recorded so tests can fire them.
+  addEventListener(type, fn) {
+    (this._handlers ??= {})[type] = fn;
+  }
+  emit(type, evt = {}) {
+    if (!this._handlers?.[type]) return false;
+    this._handlers[type]({ target: this, ...evt });
+    return true;
+  }
   focus() {}
+  scrollIntoView() {}
   closest(sel) {
     return this._closest === sel ? this : null;
   }
@@ -85,6 +107,7 @@ function makeDom() {
   };
   tbody(els.get("modelsTable"));
   tbody(els.get("callsTable"));
+  tbody(els.get("coverageTable"));
 
   const segButtons = ["rolling", "weekly", "monthly", "all"].map((w) => {
     const b = new El("button");
@@ -96,11 +119,28 @@ function makeDom() {
   const seg = els.get("windowSeg");
   seg._all = segButtons;
 
+  // mirror the markup: the coverage panel and the key entry start collapsed
+  for (const id of ["coverageCard", "keyCard", "officialNotice", "coverageWarn", "toast"]) {
+    els.get(id).hidden = true;
+  }
+
   const handlers = {};
   const document = {
     querySelector(sel) {
       const m = /^#([A-Za-z0-9_-]+)$/.exec(sel);
       if (m) return els.get(m[1]) ?? null;
+      // "#windowSeg button[data-win=\"x\"]"
+      const attr = /^#([A-Za-z0-9_-]+)\s+(\w+)\[data-([\w-]+)="([^"]+)"\]$/.exec(sel);
+      if (attr) {
+        const parent = els.get(attr[1]);
+        return (
+          (parent?._all ?? []).find(
+            (el) =>
+              el.tagName === attr[2].toUpperCase() &&
+              String(el.dataset[camel(attr[3])]) === attr[4],
+          ) ?? null
+        );
+      }
       if (sel.includes(" ")) {
         const [head, tail] = sel.split(/\s+/);
         const parent = document.querySelector(head);
@@ -117,7 +157,7 @@ function makeDom() {
           .get("rings")
           .children.map((c) => (c._inner ?? (c._inner = new El("span"))));
       }
-      if (sel === "#modelsTable tbody" || sel === "#callsTable tbody") {
+      if (sel === "#modelsTable tbody" || sel === "#callsTable tbody" || sel === "#coverageTable tbody") {
         const table = els.get(sel.split(" ")[0].slice(1));
         return table.children.filter((c) => c.tagName === "TBODY");
       }
@@ -145,7 +185,7 @@ function usagePayload() {
       fetchedAt: Date.UTC(2026, 0, 8, 12, 0, 0),
       endpoint: "https://opencode.ai/zen/go/v1/usage",
       keySource: "opencode.db:opencode-go",
-      keyMasked: "oc_sk_35…l-wC",
+      keyMasked: "oc_sk_FAKE…TEST",
       usage: {
         rolling: { status: "ok", percent: 0, resetsAt: "2026-01-08T16:00:00.000Z", rateLimited: false },
         weekly: { status: "ok", percent: 3, resetsAt: "2026-01-12T00:00:00.000Z", rateLimited: false },
@@ -237,26 +277,65 @@ function usagePayload() {
   };
 }
 
-async function boot({ payload = usagePayload(), keyInfo } = {}) {
+function coveragePayload() {
+  return {
+    ok: true,
+    plan: "go",
+    catalog: { ok: true, endpoint: "https://opencode.ai/zen/go/v1/models", fetchedAt: Date.UTC(2026, 0, 8, 9, 0, 0), count: 41, message: null },
+    pricedCount: 30,
+    summary: {
+      usedCount: 2,
+      advertisedCount: 41,
+      usedUnpricedCount: 1,
+      advertisedUnpricedCount: 11,
+      notAdvertisedCount: 0,
+      localError: null,
+    },
+    warnings: ["本机使用了 1 个未收录官方价格的模型：omen-alpha。这些模型的 token 会被统计，但费用不会计入估算。"],
+    rows: [
+      {
+        id: "omen-alpha", label: "omen-alpha", used: true, advertised: true,
+        priced: false, unlimited: false, monthlyLimit: null, windowLimits: null, peak: false,
+      },
+      {
+        id: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", used: true, advertised: true,
+        priced: true, unlimited: false, monthlyLimit: 60,
+        windowLimits: { rolling: 12, weekly: 30, monthly: 60 }, peak: true,
+      },
+      {
+        id: "kimi-k3", label: "Kimi K3", used: false, advertised: false,
+        priced: true, unlimited: false, monthlyLimit: 15,
+        windowLimits: { rolling: 3, weekly: 7.5, monthly: 15 }, peak: false,
+      },
+    ],
+  };
+}
+
+async function boot({ payload = usagePayload(), keyInfo, coverage = coveragePayload() } = {}) {
   const { document, els, segButtons, handlers } = makeDom();
   const fetchCalls = [];
+  const DBG = { steps: [] };
   const fetchImpl = async (url, init) => {
     fetchCalls.push({ url: String(url), method: init?.method ?? "GET" });
-    const body = String(url).startsWith("/api/usage")
+    DBG.steps.push(`fetch:${String(url)}`);
+    const target = String(url);
+    const body = target.startsWith("/api/usage")
       ? payload
-      : (keyInfo ?? {
-          hasKey: true,
-          masked: "oc_sk_35…l-wC",
-          source: "opencode.db:opencode-go",
-          configPath: "C:\\cfg\\config.json",
-        });
+      : target.startsWith("/api/coverage")
+        ? coverage
+        : (keyInfo ?? {
+            hasKey: true,
+            masked: "oc_sk_FAKE…TEST",
+            source: "opencode.db:opencode-go",
+            configPath: "C:\\cfg\\config.json",
+          });
     return { ok: true, status: 200, json: async () => body };
   };
 
   const store = new Map();
   const fn = new Function(
     "document", "window", "fetch", "localStorage", "setInterval", "setTimeout", "clearTimeout", "console",
-    `"use strict";\n${appSource}\n;return { state, render, renderModels };`,
+    `"use strict";\n${appSource}\n;return { state, render, load };`,
   );
   const api = fn(
     document,
@@ -268,22 +347,97 @@ async function boot({ payload = usagePayload(), keyInfo } = {}) {
     () => {},
     { log() {}, warn() {}, error() {} },
   );
+  DBG.steps.push("module-evaluated");
 
   // wait until the initial render has actually populated the DOM
   for (let i = 0; i < 400; i++) {
     if (fetchCalls.length >= 2 && els.get("totals").innerHTML !== "") break;
-    await new Promise((r) => setTimeout(r, 5));
+    await sleep(5);
   }
-  assert.ok(fetchCalls.length >= 2, "initial load issued requests");
+  assert.ok(fetchCalls.length >= 2, `initial load issued requests (got ${JSON.stringify(fetchCalls)}; steps ${JSON.stringify(DBG.steps)}; rejections: ${JSON.stringify(seenRejections.slice(0, 2))})`);
   assert.notEqual(els.get("totals").innerHTML, "", "initial render completed");
   return { els, segButtons, handlers, fetchCalls, api };
 }
+
+async function bootRaw({ payload, coverage = coveragePayload() } = {}) {
+  const { document, els, segButtons, handlers } = makeDom();
+  const calls = [];
+  const logged = [];
+  const fn = new Function(
+    "document", "window", "fetch", "localStorage", "setInterval", "setTimeout", "clearTimeout", "console",
+    `"use strict";\n${appSource}\n;return { state };`,
+  );
+  fn(
+    document,
+    {},
+    async (url) => {
+      const target = String(url);
+      calls.push(target);
+      const body = target.startsWith("/api/usage")
+        ? payload
+        : target.startsWith("/api/coverage")
+          ? coverage
+          : { hasKey: true, masked: "oc_sk_FAKE…TEST", source: "config", configPath: "C:\\cfg.json" };
+      return { ok: true, json: async () => body };
+    },
+    { getItem: () => null, setItem() {} },
+    () => 0,
+    () => 0,
+    () => {},
+    { log() {}, warn() {}, error: (...a) => logged.push(a.map(String).join(" ")) },
+  );
+  return { els, segButtons, handlers, calls, logged };
+}
+
+test("a render crash is reported instead of leaving a blank dashboard", async () => {
+  const payload = usagePayload();
+  // damage the payload in a way that breaks model-row rendering
+  payload.local.data.models = { not: "an array" };
+  const { els, logged } = await bootRaw({ payload });
+  await sleep(50);
+
+  assert.ok(logged.length > 0, "the failure is logged");
+  assert.match(logged.join("\n"), /渲染失败/);
+  assert.equal(els.get("toast").hidden, false, "the user sees a toast");
+  assert.match(els.get("toast").textContent, /渲染失败/);
+  // everything that rendered before the bad field still made it to the page
+  assert.match(els.get("rings").children.map((c) => c.innerHTML).join(""), /本月/);
+});
 
 const rows = (els, table) =>
   (els.get(table).children.find((c) => c.tagName === "TBODY") ?? { children: [] }).children;
 
 const tbodyHtml = (els, table) =>
   (els.get(table).children.find((c) => c.tagName === "TBODY") ?? { innerHTML: "" }).innerHTML;
+
+test("?coverage=1 opens the coverage panel on load", async () => {
+  globalThis.location = { search: "?coverage=1" };
+  try {
+    const { els } = await boot();
+    await sleep(30);
+    assert.equal(els.get("coverageCard").hidden, false);
+    assert.match(els.get("coverageSource").textContent, /官方目录 41 个模型/);
+    assert.equal(rows(els, "coverageTable").length, 3);
+  } finally {
+    delete globalThis.location;
+  }
+});
+
+test("?win= forces a billing window and suppresses auto-picking", async () => {
+  globalThis.location = { search: "?win=all" };
+  try {
+    const { els, api, segButtons } = await boot();
+    await sleep(30);
+    assert.equal(api.state.win, "all");
+    assert.equal(api.state.autoPicked, false);
+    const active = segButtons.filter((b) => b.classList.contains("active"));
+    assert.equal(active.length, 1);
+    assert.equal(active[0].dataset.win, "all");
+    assert.match(els.get("totalsScope").textContent, /全部窗口/);
+  } finally {
+    delete globalThis.location;
+  }
+});
 
 test("dashboard renders rings, per-model rows, totals, chart and calls", async () => {
   const { els, segButtons, handlers } = await boot();
@@ -296,14 +450,16 @@ test("dashboard renders rings, per-model rows, totals, chart and calls", async (
   assert.match(ringHtml, /已触发限流/, "rate-limited window is called out");
   assert.match(ringHtml, /96%/, "monthly percent is rendered");
 
-  // 5h window by default, then the monthly view which has both models
+  // the tightest window (weekly) is selected on load; switch to monthly, which
+  // is roomier and therefore includes the idle free model too
   handlers.click({ target: segButtons[2] });
   const modelRows = rows(els, "modelsTable");
   assert.equal(modelRows.length, 2);
   assert.match(modelRows[0].innerHTML, /DeepSeek V4\.1 Flash/);
   assert.match(modelRows[0].innerHTML, /峰谷价/);
-  assert.match(modelRows[0].innerHTML, /本窗口官方口径/, "cost-basis gap is surfaced");
-  assert.match(modelRows[0].innerHTML, /\$0\.0900 \/ \$60/, "window cost over monthly limit");
+  assert.match(modelRows[0].innerHTML, /本窗口上限 \$60\.00（月额度的 100%）/, "window cap is spelled out");
+  assert.match(modelRows[0].innerHTML, /官方口径/, "cost-basis gap is surfaced");
+  assert.match(modelRows[0].innerHTML, /\$0\.0900 \/ \$60\.00/, "window cost over its own cap");
   assert.match(modelRows[1].innerHTML, /免费/);
 
   const totalsHtml = els.get("totals").innerHTML;
@@ -330,9 +486,9 @@ test("switching the billing window re-filters rows without another fetch", async
   const { els, segButtons, handlers, fetchCalls, api } = await boot();
   const before = fetchCalls.filter((c) => c.url.startsWith("/api/usage")).length;
 
-  // default view is the 5h window; the free model stays visible there because
-  // it has no dollar allowance at all
-  assert.equal(api.state.win, "rolling");
+  // the auto-picked tightest window is weekly here; the free model has no dollar
+  // allowance so it stays visible regardless
+  assert.equal(api.state.win, "weekly");
   assert.equal(rows(els, "modelsTable").length, 2);
 
   handlers.click({ target: segButtons[2] });
@@ -348,6 +504,63 @@ test("switching the billing window re-filters rows without another fetch", async
     before,
     "window switching is client-side only",
   );
+});
+
+test("the tightest window is selected automatically", async () => {
+  const { els, api } = await boot();
+  // rolling: 0.01/12 = 0.08%, weekly: 0.05/30 = 0.17%, monthly: 0.09/60 = 0.15%
+  assert.equal(api.state.win, "weekly", "weekly is the most consumed window here");
+  assert.equal(api.state.autoPicked, true);
+  assert.match(els.get("modelsHint").textContent, /已自动切到最紧的窗口/);
+
+  const active = els.get("windowSeg").querySelectorAll().filter((b) => b.classList.contains("active"));
+  assert.equal(active.length, 1);
+  assert.equal(active[0].dataset.win, "weekly");
+});
+
+test("coverage view lists caps, flags unpriced models and warns", async () => {
+  const { els, handlers } = await boot();
+  const card = els.get("coverageCard");
+  assert.equal(card.hidden, true, "hidden until requested");
+
+  // the coverage button has its own listener, not the delegated document one
+  els.get("coverageBtn").emit("click");
+  await sleep(30);
+  assert.equal(card.hidden, false);
+  assert.match(els.get("coverageSource").textContent, /官方目录 41 个模型/);
+  assert.equal(els.get("coverageWarn").hidden, false);
+  assert.match(els.get("coverageWarn").textContent, /omen-alpha/);
+
+  const summary = els.get("coverageSummary").innerHTML;
+  assert.match(summary, /用过但未收录价/);
+  assert.match(summary, /1 个/);
+
+  const coverRows = rows(els, "coverageTable");
+  assert.equal(coverRows.length, 3);
+  // used-but-unpriced first, with no fabricated dollar caps
+  assert.match(coverRows[0].innerHTML, /omen-alpha/);
+  assert.match(coverRows[0].innerHTML, /未收录价格/);
+  assert.match(coverRows[0].innerHTML, /<td class="num">—<\/td>/);
+  assert.match(coverRows[1].innerHTML, /DeepSeek V4\.1 Flash/);
+  assert.match(coverRows[1].innerHTML, /\$12\.00/);
+  assert.match(coverRows[1].innerHTML, /\$30\.00/);
+  assert.match(coverRows[1].innerHTML, /\$60\.00/);
+  assert.match(coverRows[1].innerHTML, /在用/);
+  assert.match(coverRows[2].innerHTML, /已下架/);
+});
+
+test("the coverage button toggles the panel and the key button reveals the key row", async () => {
+  const { els } = await boot();
+  assert.equal(els.get("coverageCard").hidden, true);
+  els.get("coverageBtn").emit("click");
+  await sleep(30);
+  assert.equal(els.get("coverageCard").hidden, false);
+  els.get("coverageBtn").emit("click");
+  assert.equal(els.get("coverageCard").hidden, true, "second click collapses it again");
+
+  assert.equal(els.get("keyCard").hidden, true);
+  els.get("keyBtn").emit("click");
+  assert.equal(els.get("keyCard").hidden, false);
 });
 
 test("a missing local database degrades gracefully", async () => {

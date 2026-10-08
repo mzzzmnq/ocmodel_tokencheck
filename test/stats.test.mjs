@@ -96,10 +96,17 @@ test("buildStats aggregates per model and separates billing windows", () => {
   assert.equal(glm.windows.all.cost, 2.8);
   assert.equal(glm.monthlyLimit, 60);
 
-  // share ratios never decrease as the window widens
-  assert.ok(kimi.shares.rolling.shareRatio <= kimi.shares.weekly.shareRatio + 1e-12);
-  assert.ok(kimi.shares.weekly.shareRatio <= kimi.shares.monthly.shareRatio + 1e-12);
-  assert.ok(Math.abs(kimi.shares.rolling.shareRatio - 3 / 15) < 1e-12);
+  // each window is judged against its own share of the monthly allowance
+  assert.deepEqual(kimi.windowLimits, { rolling: 3, weekly: 7.5, monthly: 15, all: Infinity });
+  assert.deepEqual(glm.windowLimits, { rolling: 12, weekly: 30, monthly: 60, all: Infinity });
+  assert.equal(kimi.shares.rolling.limit, 3);
+  assert.equal(kimi.shares.rolling.cost, 3.0);
+  assert.equal(kimi.shares.rolling.shareRatio, 1, "the 5h cap is fully consumed");
+  assert.equal(kimi.shares.weekly.limit, 7.5);
+  assert.equal(kimi.shares.weekly.shareRatio, 2.4, "18 spent against a $7.50 weekly cap");
+  assert.equal(kimi.shares.monthly.shareRatio, 1.2, "18 spent against a $15 monthly cap");
+  assert.equal(kimi.shares.rolling.calls, 1);
+  assert.equal(kimi.shares.weekly.calls, 2);
 
   // models are ordered by monthly spend, descending
   assert.deepEqual(
@@ -153,6 +160,12 @@ test("Go Plus doubles the per-model allowance", () => {
   assert.equal(plus.models[0].monthlyLimit, 30);
   assert.equal(go.models[0].monthly.remaining, 0);
   assert.equal(plus.models[0].monthly.remaining, 12);
+
+  // window caps scale with the plan as well
+  assert.deepEqual(go.models[0].windowLimits, { rolling: 3, weekly: 7.5, monthly: 15, all: Infinity });
+  assert.deepEqual(plus.models[0].windowLimits, { rolling: 6, weekly: 15, monthly: 30, all: Infinity });
+  // 18 spent against a 6 dollar 5h cap on Go Plus
+  assert.equal(plus.models[0].shares.rolling.shareRatio, 3);
 });
 
 test("unlimited free models report no limit and no percentage", () => {
@@ -165,6 +178,23 @@ test("unlimited free models report no limit and no percentage", () => {
   assert.equal(m.unlimited, true);
   assert.equal(m.monthlyLimit, null);
   assert.equal(m.monthly.remaining, null);
+  assert.deepEqual(m.windowLimits, { rolling: null, weekly: null, monthly: null, all: null });
+  assert.equal(m.shares.rolling.shareRatio, 0);
+  assert.equal(m.shares.rolling.limit, null);
+});
+
+test("a model with no published price never reports a dollar allowance", () => {
+  const { file, dir } = fixtureDb([
+    { sessionId: "s1", at: NOW - 1000, modelId: "omen-alpha", input: 5000, cost: 0.0042 },
+  ]);
+  const stats = buildStats({ dbPath: file, now: NOW, plan: "go" });
+  fs.rmSync(dir, { recursive: true, force: true });
+  const m = stats.models[0];
+  assert.equal(m.known, false);
+  assert.equal(m.monthlyLimit, null);
+  assert.deepEqual(m.windowLimits, { rolling: null, weekly: null, monthly: null, all: null });
+  // the cost opencode recorded is still surfaced
+  assert.equal(m.windows.monthly.cost, 0.0042);
 });
 
 test("per-model counts include calls with missing cost and flag errors", () => {

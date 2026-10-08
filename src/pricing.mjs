@@ -144,7 +144,15 @@ function rate(input, output, cacheRead, cacheWrite, maxInputTokens = null, tier)
   return { input, output, cacheRead, cacheWrite, maxInputTokens, tier };
 }
 
-/** Model ids that exist on the Go endpoint but are not in the docs' Go plan table. */
+/**
+ * Model ids that the Go endpoint serves but that the docs' Go plan price table
+ * does not cover, so they cannot be billed locally.
+ *
+ * This is reference data only — coverage.mjs derives the same set at runtime by
+ * diffing the live `/v1/models` list against MODELS, which is what the dashboard
+ * actually shows. It is kept here so a reader can see the gap without network
+ * access, and `npm run smoke` asserts the live list still agrees with it.
+ */
 export const KNOWN_UNPRICED = [
   "minimax-m2.5",
   "kimi-k2.5",
@@ -226,7 +234,31 @@ function num(v) {
   return Number.isFinite(v) && v > 0 ? v : 0;
 }
 
-/** Billing windows, mirroring the Go plan: 5-hour rolling, weekly, monthly. */
+/**
+ * Billing windows, mirroring the Go plan: 5-hour rolling, weekly, monthly.
+ *
+ * The docs define the allowance *per model* as fractions of that model's own
+ * monthly limit: "5-hour — 20% of the monthly limit; weekly — 50%; and
+ * monthly — 100%". A model can therefore be throttled by any one of the three,
+ * which is what makes the tightest-window view meaningful.
+ */
+export const WINDOW_RULES = {
+  rolling: { share: 0.2, label: "5 小时滚动", short: "5 小时", resets: "rolling" },
+  weekly: { share: 0.5, label: "本周", short: "本周", resets: "week" },
+  monthly: { share: 1, label: "本月", short: "本月", resets: "month" },
+  all: { share: null, label: "全部", short: "全部", resets: null },
+};
+
+/** Dollar allowance for one billing window of a model, or Infinity. */
+export function windowLimit(modelId, plan, window) {
+  const monthly = monthlyLimit(modelId, plan);
+  if (monthly === null) return null;
+  if (!Number.isFinite(monthly)) return Infinity;
+  const rule = WINDOW_RULES[window];
+  if (!rule || rule.share === null) return Infinity;
+  return monthly * rule.share;
+}
+
 export function windowStarts(now = Date.now()) {
   const d = new Date(now);
   const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
