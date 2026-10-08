@@ -1,0 +1,16 @@
+{
+  "name": "tokencheck",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenCode Go 各模型额度消耗监控仪表盘（零依赖）",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --experimental-sqlite src/server.mjs",
+    "test": "node --experimental-sqlite --test \"test/*.test.mjs\"",
+    "calibrate": "node --experimental-sqlite tools/calibrate.mjs",
+    "smoke": "node --experimental-sqlite tools/smoke.mjs"
+  }
+}

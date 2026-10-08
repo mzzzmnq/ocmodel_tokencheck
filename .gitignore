@@ -1,0 +1,14 @@
+# dependencies (the project itself is zero-dependency)
+node_modules/
+
+# local data / secrets
+config.json
+*.db
+*.sqlite
+*.sqlite3
+.env
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+npm-debug.log*
