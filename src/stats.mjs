@@ -148,7 +148,7 @@ export function buildStats(opts = {}) {
   const now = opts.now ?? Date.now();
   const plan = opts.plan === "plus" ? "plus" : "go";
   const { records, sessions, dbPath } = readRecords(opts);
-  const starts = windowStarts(now);
+  const starts = windowStarts(now, opts.windowOverrides ?? null);
 
   const windows = {
     rolling: starts.rolling,
@@ -263,7 +263,7 @@ export function buildStats(opts = {}) {
     dbPath,
     plan,
     windows: {
-      rolling: { startsAt: starts.rolling, resetsAt: null, label: "5 小时滚动" },
+      rolling: { startsAt: starts.rolling, resetsAt: starts.rollingResetsAt ?? null, label: "5 小时滚动" },
       weekly: { startsAt: starts.weekly, resetsAt: starts.weeklyResetsAt, label: "本周" },
       monthly: { startsAt: starts.monthly, resetsAt: starts.monthlyResetsAt, label: "本月" },
       all: { startsAt: null, resetsAt: null, label: "全部" },

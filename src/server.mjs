@@ -22,7 +22,7 @@ import {
   clearCatalogCache,
 } from "./official.mjs";
 import { buildCoverage } from "./coverage.mjs";
-import { MODELS, monthlyLimit, isPeakHour, WINDOW_RULES } from "./pricing.mjs";
+import { MODELS, monthlyLimit, isPeakHour, WINDOW_RULES, windowOverridesFromOfficial } from "./pricing.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -109,20 +109,23 @@ async function api(req, res, url) {
 
   if (route === "/api/usage" && req.method === "GET") {
     const plan = url.searchParams.get("plan") === "plus" ? "plus" : url.searchParams.get("plan") === "go" ? "go" : PLAN;
-    const [official, local] = await Promise.all([
-      fetchOfficialUsage({ force: url.searchParams.get("force") === "1", dbPath: DB_PATH }),
-      Promise.resolve().then(() => {
-        try {
-          return { ok: true, data: buildStats({ dbPath: DB_PATH, plan }) };
-        } catch (err) {
-          return {
-            ok: false,
-            reason: err.code === "ENODB" ? "no-db" : "error",
-            message: err.message,
-          };
-        }
-      }),
-    ]);
+    // Fetch the official windows first: their resetsAt define the account's real
+    // billing windows, which the local aggregation is aligned to.
+    const official = await fetchOfficialUsage({
+      force: url.searchParams.get("force") === "1",
+      dbPath: DB_PATH,
+    });
+    const windowOverrides = windowOverridesFromOfficial(official);
+    let local;
+    try {
+      local = { ok: true, data: buildStats({ dbPath: DB_PATH, plan, windowOverrides }) };
+    } catch (err) {
+      local = {
+        ok: false,
+        reason: err.code === "ENODB" ? "no-db" : "error",
+        message: err.message,
+      };
+    }
 
     let calls = [];
     if (local.ok) {

@@ -252,6 +252,27 @@ test("daily rollup covers a continuous 14-day timeline", () => {
   assert.equal(stats.daily[stats.daily.length - 1].calls, 1, "today carries the newest call");
 });
 
+test("windowOverrides realign the aggregation to the account's windows", () => {
+  const { file, dir } = fixtureDb([
+    { sessionId: "s1", at: NOW - 60_000, modelId: "kimi-k3", input: 1e6, cost: 3.0 },
+  ]);
+  const stats = buildStats({
+    dbPath: file,
+    now: NOW,
+    plan: "go",
+    windowOverrides: { monthly: NOW - 1000, monthlyResetsAt: NOW + 1000 },
+  });
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  // the only call predates the overridden monthly start, so it drops out of that
+  // window (but is still counted in "all")
+  assert.equal(stats.windows.monthly.startsAt, NOW - 1000);
+  assert.equal(stats.windows.monthly.resetsAt, NOW + 1000);
+  assert.equal(stats.models[0].windows.monthly.cost, 0);
+  assert.equal(stats.models[0].windows.all.cost, 3.0);
+  assert.equal(stats.models[0].shares.monthly.cost, 0);
+});
+
 test("a missing database produces a typed ENODB error", () => {
   assert.throws(
     () => buildStats({ dbPath: path.join(os.tmpdir(), "definitely-missing-opencode.db") }),

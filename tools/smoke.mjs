@@ -69,6 +69,11 @@ try {
   check("local block has per-model rows",
     usage.json.local.ok === true && Array.isArray(usage.json.local.data.models),
     usage.json.local.ok ? `${usage.json.local.data.models.length} models` : usage.json.local.message);
+  check("local windows align to the official resetsAt",
+    !usage.json.official?.ok ||
+      usage.json.local?.data?.windows?.monthly?.resetsAt ===
+        Date.parse(usage.json.official.usage.monthly.resetsAt),
+    `official=${usage.json.official?.usage?.monthly?.resetsAt ?? "-"}`);
 
   const plus = await get("/api/usage?plan=plus");
   check("plan=plus is honoured", plus.json.plan === "plus");

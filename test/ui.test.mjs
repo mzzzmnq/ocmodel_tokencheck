@@ -25,7 +25,7 @@ process.on("unhandledRejection", (e) => seenRejections.push(e?.stack || String(e
 
 const ELEMENT_IDS = [
   "healthDot", "planPill", "planSelect", "refreshBtn", "keyBtn", "updatedAt",
-  "officialSource", "rings", "officialNotice", "keyCard", "keySource", "configPath",
+  "officialSource", "rings", "officialNotice", "reconcile", "keyCard", "keySource", "configPath",
   "keyInput", "keySave", "keyClear", "windowSeg", "modelsHint", "modelsTable",
   "dailyChart", "totals", "totalsScope", "callsTable", "toast", "footInfo",
   "coverageBtn", "coverageCard", "coverageSource", "coverageWarn", "coverageSummary",
@@ -480,6 +480,16 @@ test("dashboard renders rings, per-model rows, totals, chart and calls", async (
 
   assert.match(els.get("footInfo").textContent, /8\/9 条记录属于 OpenCode Go/);
   assert.equal(els.get("planPill").textContent, "Go");
+});
+
+test("the reconciliation panel contrasts account and local percentages", async () => {
+  const { els } = await boot();
+  const host = els.get("reconcile");
+  assert.equal(host.hidden, false);
+  assert.match(host.innerHTML, /口径对账/);
+  assert.match(host.innerHTML, /账号 96%/, "account-wide monthly percent");
+  assert.match(host.innerHTML, /本机 0\.2%/, "local estimate for the same window");
+  assert.match(host.innerHTML, /差额来自本机之外/, "the gap is called out, not hidden");
 });
 
 test("switching the billing window re-filters rows without another fetch", async () => {

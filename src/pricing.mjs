@@ -259,17 +259,60 @@ export function windowLimit(modelId, plan, window) {
   return monthly * rule.share;
 }
 
-export function windowStarts(now = Date.now()) {
+export function windowStarts(now = Date.now(), overrides = null) {
   const d = new Date(now);
   const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
   const day = d.getUTCDay();
   const sinceMonday = (day + 6) % 7;
   const weekStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - sinceMonday);
-  return {
+  const base = {
     rolling: now - 5 * 3600_000,
     weekly: weekStart,
     monthly: monthStart,
+    rollingResetsAt: null,
     weeklyResetsAt: weekStart + 7 * 86_400_000,
     monthlyResetsAt: Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1),
   };
+  if (!overrides) return base;
+  // The official usage API publishes each window's own `resetsAt`. Prefer those
+  // so the local windows line up with the account's windows instead of assuming
+  // calendar boundaries — the Go monthly window is NOT the calendar month.
+  for (const w of ["rolling", "weekly", "monthly"]) {
+    if (Number.isFinite(overrides[w])) base[w] = overrides[w];
+    if (Number.isFinite(overrides[`${w}ResetsAt`])) base[`${w}ResetsAt`] = overrides[`${w}ResetsAt`];
+  }
+  return base;
+}
+
+/**
+ * Derive window starts from the official resetsAt values, so the local per-model
+ * figures are measured over the same windows the account is billed on.
+ *
+ * @param {{ok?:boolean, usage?:Record<string,{resetsAt?:string}>}} official
+ */
+export function windowOverridesFromOfficial(official) {
+  if (!official?.ok) return null;
+  const parse = (iso) => {
+    const t = Date.parse(iso ?? "");
+    return Number.isFinite(t) ? t : null;
+  };
+  const out = {};
+  const rolling = parse(official.usage?.rolling?.resetsAt);
+  const weekly = parse(official.usage?.weekly?.resetsAt);
+  const monthly = parse(official.usage?.monthly?.resetsAt);
+  if (rolling !== null) {
+    out.rolling = rolling - 5 * 3600_000;
+    out.rollingResetsAt = rolling;
+  }
+  if (weekly !== null) {
+    out.weekly = weekly - 7 * 86_400_000;
+    out.weeklyResetsAt = weekly;
+  }
+  if (monthly !== null) {
+    const m = new Date(monthly);
+    m.setUTCMonth(m.getUTCMonth() - 1);
+    out.monthly = m.getTime();
+    out.monthlyResetsAt = monthly;
+  }
+  return Object.keys(out).length ? out : null;
 }

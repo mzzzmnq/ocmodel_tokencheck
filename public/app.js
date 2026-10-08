@@ -266,6 +266,58 @@ function ringCard(label, win, sub, key) {
   return el;
 }
 
+/**
+ * The official API reports one account-wide percentage per window, covering every
+ * machine and client on the subscription; the local store only sees this opencode
+ * install. Show both side by side so the gap is quantified, never hidden.
+ */
+function localWindowPercent(win) {
+  const models = state.data?.local?.data?.models || [];
+  let best = null;
+  for (const m of models) {
+    if (!m.known || m.unlimited) continue;
+    // shareRatio is cost / that window's own allowance, computed server-side
+    const ratio = m.shares?.[win]?.shareRatio;
+    if (!Number.isFinite(ratio)) continue;
+    if (best === null || ratio > best) best = ratio;
+  }
+  return best === null ? null : best * 100;
+}
+
+function renderReconcile() {
+  const host = $("#reconcile");
+  const official = state.data?.official;
+  const local = state.data?.local;
+  if (!official?.ok || !local?.ok) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+
+  const labels = { rolling: "5 小时", weekly: "本周", monthly: "本月" };
+  let gap = false;
+  const items = [];
+  for (const win of ["rolling", "weekly", "monthly"]) {
+    const account = official.usage?.[win]?.percent;
+    const mine = localWindowPercent(win);
+    if (account == null && mine == null) continue;
+    if (account != null && mine != null && account - mine >= 3) gap = true;
+    items.push(
+      `<div class="recon-item"><span class="k">${labels[win]}</span>` +
+        `<span class="v">账号 ${fmtPercent(account)}</span>` +
+        `<span class="v muted">本机 ${mine == null ? "—" : fmtPercent(mine)}</span></div>`,
+    );
+  }
+
+  host.hidden = false;
+  host.innerHTML =
+    `<div class="recon-head">口径对账 · 账号口径含所有电脑/客户端，本机口径仅统计这台电脑的 opencode</div>` +
+    items.join("") +
+    (gap
+      ? `<div class="recon-note">账号百分比高于本机估算：差额来自本机之外的用量（其他电脑 / 其他客户端）。</div>`
+      : "");
+}
+
 function renderModels() {
   const local = state.data?.local;
   const tbody = $("#modelsTable tbody");
@@ -445,6 +497,7 @@ function renderFooter() {
 
 function render() {
   renderOfficial();
+  renderReconcile();
   renderModels();
   renderDaily();
   renderTotals();

@@ -7,6 +7,7 @@ import {
   pickTier,
   windowLimit,
   windowStarts,
+  windowOverridesFromOfficial,
   WINDOW_RULES,
   MODELS,
 } from "../src/pricing.mjs";
@@ -140,4 +141,36 @@ test("every documented model carries a positive or unlimited allowance", () => {
     const limit = monthlyLimit(id, "go");
     assert.ok(limit > 0, `${id} limit ${limit}`);
   }
+});
+
+test("official resetsAt overrides the calendar window boundaries", () => {
+  const official = {
+    ok: true,
+    usage: {
+      rolling: { resetsAt: "2026-10-08T11:26:05.000Z" },
+      weekly: { resetsAt: "2026-10-12T00:00:00.000Z" },
+      monthly: { resetsAt: "2026-10-23T01:14:47.000Z" },
+    },
+  };
+  const ov = windowOverridesFromOfficial(official);
+  assert.equal(ov.rolling, Date.parse("2026-10-08T06:26:05.000Z"));
+  assert.equal(ov.rollingResetsAt, Date.parse("2026-10-08T11:26:05.000Z"));
+  assert.equal(ov.weekly, Date.parse("2026-10-05T00:00:00.000Z"));
+  // the Go monthly window is NOT the calendar month: it starts a month before its reset
+  assert.equal(ov.monthly, Date.parse("2026-09-23T01:14:47.000Z"));
+  assert.equal(ov.monthlyResetsAt, Date.parse("2026-10-23T01:14:47.000Z"));
+
+  const now = Date.UTC(2026, 9, 8, 12, 0, 0);
+  const s = windowStarts(now, ov);
+  assert.equal(s.monthly, Date.parse("2026-09-23T01:14:47.000Z"));
+  assert.equal(s.monthlyResetsAt, Date.parse("2026-10-23T01:14:47.000Z"));
+
+  // without overrides, the calendar defaults still apply
+  const base = windowStarts(now);
+  assert.equal(base.monthly, Date.UTC(2026, 9, 1));
+  assert.equal(base.monthlyResetsAt, Date.UTC(2026, 10, 1));
+  assert.equal(base.rollingResetsAt, null);
+
+  assert.equal(windowOverridesFromOfficial({ ok: false }), null);
+  assert.equal(windowOverridesFromOfficial({ ok: true, usage: {} }), null);
 });
