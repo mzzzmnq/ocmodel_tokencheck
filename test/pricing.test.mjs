@@ -76,9 +76,11 @@ test("monthly limits follow the documented per-model allowances and Go Plus scal
   assert.equal(monthlyLimit("kimi-k3", "go"), 15);
   assert.equal(monthlyLimit("glm-5.2", "go"), 60);
   assert.equal(monthlyLimit("qwen3.8-flash", "go"), 30);
-  assert.equal(monthlyLimit("kimi-k3", "plus"), 30);
-  assert.equal(monthlyLimit("glm-5.2", "plus"), 120);
+  assert.equal(monthlyLimit("kimi-k3", "plus"), 60);
+  assert.equal(monthlyLimit("glm-5.2", "plus"), 180);
+  assert.equal(monthlyLimit("deepseek-v4.1-flash", "plus"), 120);
   assert.equal(monthlyLimit("longcat-2.5-preview-free", "go"), Infinity);
+  assert.equal(monthlyLimit("step-5-preview-free", "go"), Infinity);
   assert.equal(monthlyLimit("not-a-model", "go"), null);
 });
 
@@ -93,10 +95,10 @@ test("each window gets 20% / 50% / 100% of the model's monthly allowance", () =>
   assert.equal(windowLimit("glm-5.2", "go", "monthly"), 60);
   assert.equal(windowLimit("glm-5.2", "go", "all"), Infinity);
 
-  // Go Plus doubles every window
-  assert.equal(windowLimit("kimi-k3", "plus", "rolling"), 6);
-  assert.equal(windowLimit("kimi-k3", "plus", "weekly"), 15);
-  assert.equal(windowLimit("kimi-k3", "plus", "monthly"), 30);
+  // Go Plus uses the documented per-model allowance (Kimi K3: $60, not 2x Go)
+  assert.equal(windowLimit("kimi-k3", "plus", "rolling"), 12);
+  assert.equal(windowLimit("kimi-k3", "plus", "weekly"), 30);
+  assert.equal(windowLimit("kimi-k3", "plus", "monthly"), 60);
 
   // unlimited models have no window caps; unknown models have no data at all
   assert.equal(windowLimit("longcat-2.5-preview-free", "go", "monthly"), Infinity);

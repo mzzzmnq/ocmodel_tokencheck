@@ -74,6 +74,9 @@ try {
       usage.json.local?.data?.windows?.monthly?.resetsAt ===
         Date.parse(usage.json.official.usage.monthly.resetsAt),
     `official=${usage.json.official?.usage?.monthly?.resetsAt ?? "-"}`);
+  check("usage payload includes the session ranking",
+    Array.isArray(usage.json.topSessions),
+    `${usage.json.topSessions?.length ?? 0} sessions`);
 
   const plus = await get("/api/usage?plan=plus");
   check("plan=plus is honoured", plus.json.plan === "plus");

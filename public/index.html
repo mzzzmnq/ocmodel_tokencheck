@@ -122,6 +122,22 @@
       </div>
 
       <section class="card">
+        <div class="card-head"><h2>会话排行（按消耗）</h2><span class="hint" id="sessionsHint"></span></div>
+        <div class="table-wrap">
+          <table id="sessionsTable">
+            <thead>
+              <tr>
+                <th class="col-model">会话</th><th>模型</th>
+                <th class="num">消耗</th><th class="num">调用</th>
+                <th class="num">输入</th><th class="num">输出</th><th class="num">缓存读</th><th class="num">最近</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
         <div class="card-head"><h2>最近调用</h2></div>
         <div class="table-wrap">
           <table id="callsTable">

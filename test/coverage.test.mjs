@@ -123,7 +123,7 @@ test("coverage separates used, priced, advertised and unpriced models", async ()
   }
 });
 
-test("Go Plus doubles the caps reported in coverage", async () => {
+test("Go Plus uses the documented caps in coverage", async () => {
   const { file, dir } = fixtureDb(["glm-5.2"]);
   const restore = stubFetch(async () => ({
     ok: true,
@@ -133,8 +133,9 @@ test("Go Plus doubles the caps reported in coverage", async () => {
   try {
     const c = await buildCoverage({ dbPath: file, plan: "plus" });
     const glm = c.rows.find((r) => r.id === "glm-5.2");
-    assert.deepEqual(glm.windowLimits, { rolling: 24, weekly: 60, monthly: 120 });
-    assert.equal(glm.monthlyLimit, 120);
+    // GLM-5.2 Go Plus is $180 (documented), not 2x the $60 Go figure
+    assert.deepEqual(glm.windowLimits, { rolling: 36, weekly: 90, monthly: 180 });
+    assert.equal(glm.monthlyLimit, 180);
   } finally {
     restore();
     fs.rmSync(dir, { recursive: true, force: true });

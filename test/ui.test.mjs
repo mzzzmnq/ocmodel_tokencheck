@@ -27,7 +27,7 @@ const ELEMENT_IDS = [
   "healthDot", "planPill", "planSelect", "refreshBtn", "keyBtn", "updatedAt",
   "officialSource", "rings", "officialNotice", "reconcile", "keyCard", "keySource", "configPath",
   "keyInput", "keySave", "keyClear", "windowSeg", "modelsHint", "modelsTable",
-  "dailyChart", "totals", "totalsScope", "callsTable", "toast", "footInfo",
+  "dailyChart", "totals", "totalsScope", "sessionsTable", "sessionsHint", "callsTable", "toast", "footInfo",
   "coverageBtn", "coverageCard", "coverageSource", "coverageWarn", "coverageSummary",
   "coverageTable",
 ];
@@ -107,6 +107,7 @@ function makeDom() {
   };
   tbody(els.get("modelsTable"));
   tbody(els.get("callsTable"));
+  tbody(els.get("sessionsTable"));
   tbody(els.get("coverageTable"));
 
   const segButtons = ["rolling", "weekly", "monthly", "all"].map((w) => {
@@ -260,6 +261,20 @@ function usagePayload() {
         },
       },
     },
+    topSessions: [
+      {
+        sessionId: "ses_1", title: "离散傅里叶变换计算举例", modelIds: ["deepseek-v4.1-flash"],
+        label: "DeepSeek V4.1 Flash", cost: 0.0019, recordedCost: 0.001, calls: 3, errors: 0,
+        tokens: { input: 5000, output: 2000, reasoning: 500, cacheRead: 9000, cacheWrite: 0 },
+        firstAt: Date.UTC(2026, 0, 7, 9, 0, 0), lastAt: Date.UTC(2026, 0, 8, 11, 30, 0),
+      },
+      {
+        sessionId: "ses_2", title: "<img src=x onerror=alert(1)>", modelIds: ["glm-5.2", "kimi-k3"],
+        label: "GLM-5.2、Kimi K3", cost: 0.0005, recordedCost: 0.0005, calls: 1, errors: 0,
+        tokens: { input: 100, output: 10, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        firstAt: Date.UTC(2026, 0, 8, 10, 0, 0), lastAt: Date.UTC(2026, 0, 8, 10, 0, 0),
+      },
+    ],
     recentCalls: [
       {
         id: "msg_1", at: Date.UTC(2026, 0, 8, 11, 30, 0), modelId: "deepseek-v4.1-flash",
@@ -490,6 +505,38 @@ test("the reconciliation panel contrasts account and local percentages", async (
   assert.match(host.innerHTML, /账号 96%/, "account-wide monthly percent");
   assert.match(host.innerHTML, /本机 0\.2%/, "local estimate for the same window");
   assert.match(host.innerHTML, /差额来自本机之外/, "the gap is called out, not hidden");
+});
+
+test("session ranking renders and escapes titles", async () => {
+  const { els } = await boot();
+  const sessionRows = rows(els, "sessionsTable");
+  assert.equal(sessionRows.length, 2);
+  assert.match(sessionRows[0].innerHTML, /离散傅里叶/);
+  assert.match(sessionRows[0].innerHTML, /\$0\.0019/);
+  assert.match(sessionRows[0].innerHTML, /DeepSeek V4\.1 Flash/);
+  // a hostile session title must be escaped, never injected as markup
+  assert.match(sessionRows[1].innerHTML, /&lt;img/);
+  assert.doesNotMatch(sessionRows[1].innerHTML, /<img src=x/);
+  assert.match(els.get("sessionsHint").textContent, /共 2 个/);
+});
+
+test("multiple priced models render in the server's order", async () => {
+  const payload = usagePayload();
+  const ds = payload.local.data.models[0];
+  const kimi = JSON.parse(JSON.stringify(ds));
+  kimi.modelId = "kimi-k3";
+  kimi.label = "Kimi K3";
+  kimi.monthlyLimit = 15;
+  kimi.windows.monthly = { ...kimi.windows.monthly, cost: 0.5, calls: 3 };
+  kimi.shares.monthly = { cost: 0.5, calls: 3, shareRatio: 0.0333, hasPeakPricing: false };
+  payload.local.data.models = [kimi, ds]; // server sorts by monthly spend desc
+
+  const { els, segButtons, handlers } = await boot({ payload });
+  handlers.click({ target: segButtons[2] }); // monthly
+  const modelRows = rows(els, "modelsTable");
+  assert.equal(modelRows.length, 2);
+  assert.match(modelRows[0].innerHTML, /Kimi K3/);
+  assert.match(modelRows[1].innerHTML, /DeepSeek V4\.1 Flash/);
 });
 
 test("switching the billing window re-filters rows without another fetch", async () => {

@@ -16,6 +16,7 @@
  *  - `peak` multipliers model DeepSeek's peak / off-peak pricing.
  */
 
+/** Fallback Go Plus multiplier, used only for models missing a documented figure. */
 export const PLUS_MULTIPLIER = 2;
 
 /** DeepSeek peak windows: 01:00-04:00 and 06:00-10:00 UTC, Mon-Fri. */
@@ -37,6 +38,12 @@ export const MODELS = {
   "longcat-2.0": { label: "LongCat-2.0", limit: 60, tiers: [rate(0.3, 1.2, 0.006, null)] },
   "longcat-2.5-preview-free": {
     label: "LongCat 2.5 Preview Free",
+    limit: Infinity,
+    tiers: [rate(0, 0, 0, null)],
+    unlimited: true,
+  },
+  "step-5-preview-free": {
+    label: "Step 5 Preview Free",
     limit: Infinity,
     tiers: [rate(0, 0, 0, null)],
     unlimited: true,
@@ -145,6 +152,44 @@ function rate(input, output, cacheRead, cacheWrite, maxInputTokens = null, tier)
 }
 
 /**
+ * Documented Go Plus monthly allowances (USD), from the Go Plus tab of
+ * https://opencode.ai/docs/go/. Go Plus is NOT a uniform multiple of Go — the
+ * published figures range from 2x to 8x depending on the model.
+ */
+export const PLUS_LIMITS = {
+  "glm-5.3-flash": 180,
+  "glm-5.3": 120,
+  "glm-5.2": 180,
+  "kimi-k3": 60,
+  "kimi-k2.7-code": 180,
+  "kimi-k2.6": 240,
+  "longcat-2.0": 240,
+  "mimo-v2.6-flash": 120,
+  "mimo-v2.6-pro": 60,
+  "mimo-v2.5": 120,
+  "mimo-v2.5-pro": 60,
+  "minimax-m3": 180,
+  "minimax-m2.7": 240,
+  "muse-spark-1.3-contributor": 120,
+  "muse-spark-1.2-contributor": 120,
+  "qwen3.8-max": 60,
+  "qwen3.8-flash": 90,
+  "qwen3.7-plus": 180,
+  "deepseek-v4.1-flash": 120,
+  "deepseek-v4-pro": 60,
+  "deepseek-v4-flash": 120,
+  "deepseek-v4-flash-vision-exp": 60,
+  "hy4-preview": 120,
+  hy3: 240,
+  "space-bunny": 120,
+  "grok-4.7": 60,
+  "grok-4.6": 60,
+  "gpt-6-luna": 60,
+  "gpt-5.6-luna": 60,
+  "claude-haiku-5-5": 60,
+};
+
+/**
  * Model ids that the Go endpoint serves but that the docs' Go plan price table
  * does not cover, so they cannot be billed locally.
  *
@@ -197,7 +242,11 @@ export function monthlyLimit(modelId, plan = "go") {
   const model = MODELS[modelId];
   if (!model) return null;
   if (!Number.isFinite(model.limit)) return Infinity;
-  return plan === "plus" ? model.limit * PLUS_MULTIPLIER : model.limit;
+  if (plan === "plus") {
+    const documented = PLUS_LIMITS[modelId];
+    return Number.isFinite(documented) ? documented : model.limit * PLUS_MULTIPLIER;
+  }
+  return model.limit;
 }
 
 /**

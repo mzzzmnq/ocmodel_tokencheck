@@ -18,6 +18,12 @@ const pinnedWindow = WINDOWS.includes(bootParams.get("win")) ? bootParams.get("w
 
 /* ---------- formatting ---------- */
 
+function escapeHtml(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (ch) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+  ));
+}
+
 function fmtMoney(v, digits) {
   if (v == null || !Number.isFinite(v)) return "—";
   const d = digits ?? (Math.abs(v) < 1 ? 4 : 2);
@@ -158,7 +164,7 @@ function renderCoverage() {
     if (r.priced && r.advertised === false) tags.push('<span class="tag">已下架</span>');
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><div class="model-name"><span>${r.label}</span></div><div class="basis">${r.id}</div></td>
+      <td><div class="model-name"><span>${escapeHtml(r.label)}</span></div><div class="basis">${escapeHtml(r.id)}</div></td>
       <td class="num">${r.windowLimits ? (r.unlimited ? "不限" : fmtMoney(r.windowLimits.rolling, 2)) : "—"}</td>
       <td class="num">${r.windowLimits ? (r.unlimited ? "不限" : fmtMoney(r.windowLimits.weekly, 2)) : "—"}</td>
       <td class="num">${r.windowLimits ? (r.unlimited ? "不限" : fmtMoney(r.windowLimits.monthly, 2)) : "—"}</td>
@@ -380,7 +386,7 @@ function renderModels() {
     const basis = basisParts.length ? `<div class="basis">${basisParts.join(" · ")}</div>` : "";
 
     tr.innerHTML = `
-      <td class="col-model"><div class="model-name"><span>${m.label}</span>${tags.join("")}</div>${basis}</td>
+      <td class="col-model"><div class="model-name"><span>${escapeHtml(m.label)}</span>${tags.join("")}</div>${basis}</td>
       <td class="col-bar">
         <div class="bar ${barClass(pct)}"><span style="width:${pct.toFixed(2)}%"></span><em>${m.unlimited ? "免费" : fmtPercent(pct)}</em></div>
       </td>
@@ -473,12 +479,37 @@ function renderCalls() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${fmtTime(c.at)}</td>
-      <td>${c.label}${c.tier ? ` <span class="tag peak">${c.tier}</span>` : ""}</td>
-      <td>${(c.title || "—").slice(0, 28)}</td>
+      <td>${escapeHtml(c.label)}${c.tier ? ` <span class="tag peak">${escapeHtml(c.tier)}</span>` : ""}</td>
+      <td>${escapeHtml((c.title || "—").slice(0, 28))}</td>
       <td class="num">${fmtTokens(c.tokens.input)}</td>
       <td class="num">${fmtTokens(c.tokens.output + c.tokens.reasoning)}</td>
       <td class="num">${fmtTokens(c.tokens.cacheRead)}</td>
       <td class="num">${fmtMoney(c.cost, 6)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderSessions() {
+  const tbody = $("#sessionsTable tbody");
+  const sessions = (state.data?.local?.ok && state.data?.topSessions) || [];
+  tbody.innerHTML = "";
+  if (!sessions.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">暂无会话记录</td></tr>';
+    $("#sessionsHint").textContent = "";
+    return;
+  }
+  $("#sessionsHint").textContent = `按官方峰谷口径消耗排序 · 共 ${sessions.length} 个`;
+  for (const s of sessions) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="col-model">${escapeHtml((s.title || "（无标题）").slice(0, 36))}</td>
+      <td>${escapeHtml(s.label)}</td>
+      <td class="num">${fmtMoney(s.cost, 4)}</td>
+      <td class="num">${s.calls}</td>
+      <td class="num">${fmtTokens(s.tokens.input)}</td>
+      <td class="num">${fmtTokens(s.tokens.output + s.tokens.reasoning)}</td>
+      <td class="num">${fmtTokens(s.tokens.cacheRead)}</td>
+      <td class="num">${fmtTime(s.lastAt)}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -501,6 +532,7 @@ function render() {
   renderModels();
   renderDaily();
   renderTotals();
+  renderSessions();
   renderCalls();
   renderFooter();
   loadKey();

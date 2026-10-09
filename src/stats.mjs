@@ -357,3 +357,77 @@ export function localModelIds(opts = {}) {
   const { records } = readRecords(opts);
   return [...new Set(records.filter((r) => r.isGo).map((r) => r.modelId))].sort();
 }
+
+/**
+ * Per-session consumption, biggest first — "which conversation burned the most".
+ * Aggregates the same Go records as buildStats, keyed by session, using the
+ * official (peak-aware) cost.
+ *
+ * @param {{dbPath?: string}} [opts]
+ * @param {number} [limit]
+ */
+export function sessionStats(opts = {}, limit = 20) {
+  const { records } = readRecords(opts);
+  const bySession = new Map();
+  for (const rec of records) {
+    if (!rec.isGo) continue;
+    let e = bySession.get(rec.sessionId);
+    if (!e) {
+      e = {
+        sessionId: rec.sessionId,
+        title: rec.title ?? null,
+        modelIds: new Set(),
+        cost: 0,
+        recordedCost: 0,
+        calls: 0,
+        errors: 0,
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        firstAt: rec.at,
+        lastAt: rec.at,
+      };
+      bySession.set(rec.sessionId, e);
+    }
+    e.modelIds.add(rec.modelId);
+    e.cost += rec.cost;
+    e.recordedCost += rec.recordedCost;
+    e.calls += 1;
+    if (rec.error) e.errors += 1;
+    e.input += rec.tokens.input;
+    e.output += rec.tokens.output;
+    e.reasoning += rec.tokens.reasoning;
+    e.cacheRead += rec.tokens.cacheRead;
+    e.cacheWrite += rec.tokens.cacheWrite;
+    e.firstAt = Math.min(e.firstAt, rec.at);
+    e.lastAt = Math.max(e.lastAt, rec.at);
+  }
+
+  return [...bySession.values()]
+    .map((e) => {
+      const modelIds = [...e.modelIds];
+      return {
+        sessionId: e.sessionId,
+        title: e.title,
+        modelIds,
+        label: modelIds.map((id) => getModel(id)?.label ?? id).join("、"),
+        cost: e.cost,
+        recordedCost: e.recordedCost,
+        calls: e.calls,
+        errors: e.errors,
+        tokens: {
+          input: e.input,
+          output: e.output,
+          reasoning: e.reasoning,
+          cacheRead: e.cacheRead,
+          cacheWrite: e.cacheWrite,
+        },
+        firstAt: e.firstAt,
+        lastAt: e.lastAt,
+      };
+    })
+    .sort((a, b) => b.cost - a.cost || b.calls - a.calls)
+    .slice(0, limit);
+}

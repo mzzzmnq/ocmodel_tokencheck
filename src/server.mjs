@@ -10,7 +10,7 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildStats, recentCalls, defaultDbPath } from "./stats.mjs";
+import { buildStats, recentCalls, sessionStats, defaultDbPath } from "./stats.mjs";
 import {
   fetchOfficialUsage,
   fetchModelCatalog,
@@ -128,11 +128,17 @@ async function api(req, res, url) {
     }
 
     let calls = [];
+    let topSessions = [];
     if (local.ok) {
       try {
         calls = recentCalls({ dbPath: DB_PATH }, 25);
       } catch {
         calls = [];
+      }
+      try {
+        topSessions = sessionStats({ dbPath: DB_PATH }, 15);
+      } catch {
+        topSessions = [];
       }
     }
 
@@ -143,6 +149,7 @@ async function api(req, res, url) {
       official,
       local,
       recentCalls: calls,
+      topSessions,
     });
   }
 

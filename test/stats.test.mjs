@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { buildStats, recentCalls, defaultDbPath } from "../src/stats.mjs";
+import { buildStats, recentCalls, sessionStats, defaultDbPath } from "../src/stats.mjs";
 
 /** Build a throwaway opencode-shaped database with known records. */
 function fixtureDb(messages) {
@@ -150,7 +150,7 @@ test("token counters accumulate per window and per model", () => {
   assert.ok(Math.abs(t.recordedCost - 0.03) < 1e-12, `recorded cost ${t.recordedCost}`);
 });
 
-test("Go Plus doubles the per-model allowance", () => {
+test("Go Plus uses the documented per-model allowance", () => {
   const { file, dir } = fixtureDb([
     { sessionId: "s1", at: NOW - 1000, modelId: "kimi-k3", input: 6e6, cost: 18 },
   ]);
@@ -159,15 +159,15 @@ test("Go Plus doubles the per-model allowance", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 
   assert.equal(go.models[0].monthlyLimit, 15);
-  assert.equal(plus.models[0].monthlyLimit, 30);
+  assert.equal(plus.models[0].monthlyLimit, 60);
   assert.equal(go.models[0].monthly.remaining, 0);
-  assert.equal(plus.models[0].monthly.remaining, 12);
+  assert.equal(plus.models[0].monthly.remaining, 42);
 
   // window caps scale with the plan as well
   assert.deepEqual(go.models[0].windowLimits, { rolling: 3, weekly: 7.5, monthly: 15, all: Infinity });
-  assert.deepEqual(plus.models[0].windowLimits, { rolling: 6, weekly: 15, monthly: 30, all: Infinity });
-  // 18 spent against a 6 dollar 5h cap on Go Plus
-  assert.equal(plus.models[0].shares.rolling.shareRatio, 3);
+  assert.deepEqual(plus.models[0].windowLimits, { rolling: 12, weekly: 30, monthly: 60, all: Infinity });
+  // 18 spent against a 12 dollar 5h cap on Go Plus
+  assert.equal(plus.models[0].shares.rolling.shareRatio, 1.5);
 });
 
 test("unlimited free models report no limit and no percentage", () => {
@@ -271,6 +271,27 @@ test("windowOverrides realign the aggregation to the account's windows", () => {
   assert.equal(stats.models[0].windows.monthly.cost, 0);
   assert.equal(stats.models[0].windows.all.cost, 3.0);
   assert.equal(stats.models[0].shares.monthly.cost, 0);
+});
+
+test("sessionStats ranks Go sessions by official cost and ignores other providers", () => {
+  const { file, dir } = fixtureDb([
+    { sessionId: "s1", at: NOW - 60_000, modelId: "kimi-k3", input: 1e6, cost: 3.0 },
+    { sessionId: "s1", at: NOW - 30_000, modelId: "kimi-k3", input: 1e6, cost: 3.0 },
+    { sessionId: "s2", at: NOW - 10_000, modelId: "glm-5.2", input: 1e6, cost: 1.4 },
+    { sessionId: "s3", at: NOW - 5_000, modelId: "glm-5.2", providerId: "anthropic", cost: 99 },
+  ]);
+  const rows = sessionStats({ dbPath: file }, 10);
+  fs.rmSync(dir, { recursive: true, force: true });
+
+  assert.equal(rows.length, 2, "non-Go sessions are excluded");
+  assert.equal(rows[0].sessionId, "s1");
+  assert.equal(rows[0].cost, 6.0);
+  assert.equal(rows[0].calls, 2);
+  assert.equal(rows[0].label, "Kimi K3");
+  assert.deepEqual(rows[0].modelIds, ["kimi-k3"]);
+  assert.equal(rows[0].tokens.input, 2e6);
+  assert.equal(rows[1].sessionId, "s2");
+  assert.equal(rows[1].cost, 1.4);
 });
 
 test("a missing database produces a typed ENODB error", () => {
