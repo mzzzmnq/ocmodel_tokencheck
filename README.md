@@ -114,6 +114,29 @@ limit; weekly — 50%; monthly — 100%），所以三类窗口都可能先被�
 （本机 `monthly.resetsAt` 是 10-23，即窗口从 09-23 开始）。官方不可用时回退到
 "周一 00:00 / 月初 00:00 UTC"。
 
+## 外部客户端用量（openleet 等）
+
+有些客户端**直连** OpenCode Go API（不经过 opencode），消耗不会写进 opencode 的库。
+这类客户端只要按下面格式追加一行 JSONL，tokencheck 就会把它当作**第二个数据源**读进来，
+用同一套价格表复算（含分档、峰谷），并归到各自的 `client` 名下：
+
+```json
+{"at":"2026-10-09T08:00:00Z","model":"deepseek-v4.1-flash","client":"openleet",
+ "sessionId":"leet:two-sum","title":"LeetCode · Two Sum",
+ "tokens":{"input":1200,"output":400,"reasoning":0,"cacheRead":8000}}
+```
+
+- 生产者只需记**原始 token**，价格永远由 tokencheck 复算（价格表唯一，避免两处漂移）。
+- `at`/`time` 接受毫秒或 ISO 字符串；`input`/`output`/`reasoning`/`cacheRead`/`cacheWrite`
+  也可放在顶层。解析失败的行会被跳过。
+- 来源由 `TOKENCHECK_USAGE_LOGS` 指定（`;` 分隔多个文件或目录，目录取其下 `*.jsonl`，
+  支持 `~`）。**未设置则不读任何外部日志**，普通 opencode 用法不受影响。
+- 界面「各模型额度消耗」会显示 `来源：opencode $x / openleet $y`；外部会话也会进「会话排行」。
+
+```
+TOKENCHECK_USAGE_LOGS=~/.local/share/openleet/usage.jsonl npm start
+```
+
 ## 配置
 
 API key 解析顺序：
@@ -135,6 +158,7 @@ API key 解析顺序：
 | `TOKENCHECK_MODELS_URL` | `https://opencode.ai/zen/go/v1/models` | 官方在售模型目录 |
 | `TOKENCHECK_CACHE_MS` | `60000` | 官方用量接口缓存时长 |
 | `TOKENCHECK_CATALOG_MS` | `86400000` | 模型目录缓存时长（24 小时） |
+| `TOKENCHECK_USAGE_LOGS` | 未设置 | 外部客户端用量日志（JSONL，`;` 分隔文件/目录，支持 `~`）；见「外部客户端用量」 |
 
 命令行参数：`--port=7788 --host=127.0.0.1 --db=<path> --plan=plus`。
 
@@ -155,6 +179,7 @@ API key 解析顺序：
 ```
 src/pricing.mjs   OpenCode Go 价格表与额度表、分档选择、峰谷判定、计费窗口
 src/stats.mjs     读取 opencode SQLite，按模型 × 计费窗口聚合
+src/usagelog.mjs  外部客户端用量日志（JSONL）读取与复算
 src/official.mjs  官方 /v1/usage 与 /v1/models 客户端、API key 发现与配置存储
 src/coverage.mjs  在售模型 / 价格表 / 本机用量 三方覆盖对齐
 src/server.mjs    零依赖 HTTP 服务与静态资源
@@ -168,13 +193,14 @@ start.cmd / start.sh 一键启动
 ## 测试
 
 ```
-npm test        # 43 个单元/渲染用例
+npm test        # 48 个单元/渲染用例
 npm run smoke   # 起一个隔离实例，跑 30 项 HTTP 端到端检查
 npm run calibrate
 ```
 
 单元测试覆盖价格分档与边界、缓存写价、峰谷窗口边界（含周末）、月额度与官方 Go Plus 额度表、
-三档窗口上限（20%/50%/100%）与嵌套单调性、官方 resetsAt 窗口对齐、按模型与会话聚合、
+三档窗口上限（20%/50%/100%）与嵌套单调性、官方 resetsAt 窗口对齐、外部用量日志解析与合并、
+按模型与会话聚合、
 多模型排序、token 累加、错误调用标记、日汇总补零、缺库报错、非法套餐、覆盖报告的四类模型划分
 与目录不可用降级，以及渲染崩溃时报错而不是留下空白页；外加一个最小假 DOM 直接渲染
 `public/app.js`，断言环形进度、模型表格、会话排行（含标题 HTML 转义）、汇总卡片、日图、
@@ -196,8 +222,8 @@ key 的读写与清除、非法 JSON、未知路由、路径穿越防护、响�
 ## 已知限制
 
 - 官方百分比是账户级聚合，**无法按模型拆分**，且**覆盖你所有电脑/客户端**；按模型的表格
-  只来自**这台机器**的 opencode 库。界面里的「口径对账」把两者并列显示并解释差额，
-  但无法自动合并其他电脑/客户端的用量——官方接口不提供按模型数据，本地库是唯一来源。
+  默认只来自**这台机器**的 opencode 库。界面里的「口径对账」把两者并列显示并解释差额。
+  其他客户端（如 openleet）可用「外部客户端用量」的 JSONL 日志接入；其他电脑仍需自行合并。
 - 未在官方 Go 文档价格表里出现的模型（`omen-alpha`、`grok-4.5` 等 13 个）标为
   「未收录价格」，只统计 token 与调用次数，不做费用估算。
 - opencode 自己记录的 `cost` 不含峰谷加价（其 models.dev 定价表没有时段维度），所以高峰时段的

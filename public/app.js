@@ -345,10 +345,16 @@ function renderModels() {
   });
 
   const totalCost = models.reduce((s, m) => s + (m.windows[win]?.cost || 0), 0);
+  const clients = local.data.clients || [];
+  const sourceNote =
+    clients.length > 1
+      ? " · 来源：" + clients.map((c) => `${escapeHtml(c.client)} ${fmtMoney(c.cost, 2)}`).join(" / ")
+      : "";
   $("#modelsHint").textContent =
     `${models.length} 个模型 · ${state.data.plan === "plus" ? "Go Plus" : "Go"} 套餐 · ` +
     `本窗口合计 ${fmtMoney(totalCost, 4)} · 进度条 = 本窗口消耗 / 该窗口上限` +
-    (state.autoPicked ? " · 已自动切到最紧的窗口" : "");
+    (state.autoPicked ? " · 已自动切到最紧的窗口" : "") +
+    sourceNote;
 
   if (!models.length) {
     tbody.innerHTML = `<tr><td colspan="8" class="empty">该窗口内暂无 OpenCode Go 调用记录。</td></tr>`;

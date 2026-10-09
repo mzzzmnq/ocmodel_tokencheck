@@ -294,6 +294,40 @@ test("sessionStats ranks Go sessions by official cost and ignores other provider
   assert.equal(rows[1].cost, 1.4);
 });
 
+test("external usage logs merge into stats and report per-client totals", () => {
+  const { file, dir } = fixtureDb([
+    { sessionId: "s1", at: NOW - 1000, modelId: "kimi-k3", input: 1e6, cost: 3.0 },
+  ]);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokencheck-log-"));
+  const logFile = path.join(logDir, "usage.jsonl");
+  fs.writeFileSync(
+    logFile,
+    JSON.stringify({
+      at: NOW - 500, model: "glm-5.2", client: "openleet", input: 1e6, sessionId: "leet-1", title: "two-sum",
+    }) + "\n",
+    "utf8",
+  );
+
+  const stats = buildStats({ dbPath: file, now: NOW, plan: "go", usageLogs: [logFile] });
+  const sessions = sessionStats({ dbPath: file, usageLogs: [logFile] }, 10);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(logDir, { recursive: true, force: true });
+
+  const glm = stats.models.find((m) => m.modelId === "glm-5.2");
+  assert.ok(glm, "the external model appears in the per-model table");
+  assert.ok(Math.abs(glm.windows.monthly.cost - 1.4) < 1e-12);
+
+  const clients = Object.fromEntries(stats.clients.map((c) => [c.client, c]));
+  assert.ok(Math.abs(clients.opencode.cost - 3.0) < 1e-12);
+  assert.ok(Math.abs(clients.openleet.cost - 1.4) < 1e-12);
+  assert.equal(clients.openleet.calls, 1);
+
+  const leet = sessions.find((s) => s.sessionId === "leet-1");
+  assert.ok(leet, "the external session is surfaced");
+  assert.equal(leet.title, "two-sum");
+  assert.equal(leet.cost, 1.4);
+});
+
 test("a missing database produces a typed ENODB error", () => {
   assert.throws(
     () => buildStats({ dbPath: path.join(os.tmpdir(), "definitely-missing-opencode.db") }),

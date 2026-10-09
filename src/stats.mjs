@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { costOf, getModel, isPeakHour, monthlyLimit, windowLimit, windowStarts } from "./pricing.mjs";
+import { readUsageLog } from "./usagelog.mjs";
 
 export function defaultDbPath() {
   const override = process.env.TOKENCHECK_DB;
@@ -129,7 +130,29 @@ export function readRecords(opts = {}) {
       cost: priced?.cost ?? recorded ?? 0,
       recordedCost: recorded ?? priced?.cost ?? 0,
       error: data.finish === "error" || Boolean(data.error),
+      client: "opencode",
     });
+  }
+
+  // External clients that call the Go API directly (e.g. openleet) can log their
+  // raw token usage to a JSONL file; merge those in and price them identically.
+  const external = readUsageLog(opts.usageLogs);
+  if (external.length) {
+    records.push(...external);
+    const seen = new Set(sessions.map((s) => s.id));
+    for (const r of external) {
+      if (seen.has(r.sessionId)) continue;
+      seen.add(r.sessionId);
+      sessions.push({
+        id: r.sessionId,
+        title: r.title ?? r.client,
+        model: r.modelId,
+        cost: null,
+        tokens_input: null,
+        tokens_output: null,
+        tokens_cache_read: null,
+      });
+    }
   }
 
   records.sort((a, b) => a.at - b.at);
@@ -258,10 +281,24 @@ export function buildStats(opts = {}) {
 
   for (const e of byModel.values()) delete e._sessions;
 
+  const clients = new Map();
+  for (const rec of records) {
+    if (!rec.isGo) continue;
+    const name = rec.client ?? "opencode";
+    const e = clients.get(name) ?? { client: name, cost: 0, calls: 0, models: new Set() };
+    e.cost += rec.cost;
+    e.calls += 1;
+    e.models.add(rec.modelId);
+    clients.set(name, e);
+  }
+
   return {
     generatedAt: now,
     dbPath,
     plan,
+    clients: [...clients.values()]
+      .map((e) => ({ client: e.client, cost: e.cost, calls: e.calls, models: e.models.size }))
+      .sort((a, b) => b.cost - a.cost),
     windows: {
       rolling: { startsAt: starts.rolling, resetsAt: starts.rollingResetsAt ?? null, label: "5 小时滚动" },
       weekly: { startsAt: starts.weekly, resetsAt: starts.weeklyResetsAt, label: "本周" },

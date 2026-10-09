@@ -253,6 +253,10 @@ function usagePayload() {
         sessionCount: 4,
         recordCount: 9,
         goRecordCount: 8,
+        clients: [
+          { client: "opencode", cost: 0.09, calls: 7, models: 1 },
+          { client: "openleet", cost: 0.04, calls: 3, models: 1 },
+        ],
         windows: {
           rolling: { startsAt: 1, resetsAt: null, label: "5 小时滚动" },
           weekly: { startsAt: 1, resetsAt: 2, label: "本周" },
@@ -476,6 +480,8 @@ test("dashboard renders rings, per-model rows, totals, chart and calls", async (
   assert.match(modelRows[0].innerHTML, /官方口径/, "cost-basis gap is surfaced");
   assert.match(modelRows[0].innerHTML, /\$0\.1300 \/ \$60\.00/, "window cost over its own cap");
   assert.match(modelRows[1].innerHTML, /免费/);
+  assert.match(els.get("modelsHint").textContent, /来源：/, "per-client sources are shown");
+  assert.match(els.get("modelsHint").textContent, /openleet/);
 
   const totalsHtml = els.get("totals").innerHTML;
   assert.match(els.get("totalsScope").textContent, /本月窗口/);
